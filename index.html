@@ -270,6 +270,10 @@ const STAGES = [
     [9,13,2,1,TL.SPIKE],
     // ゴール
     [28,13,2,2,TL.GOAL],
+  ],
+  movers:[
+    {x:6,y:11,w:3,h:1,range:6,speed:0.8},   // 左の移動床
+    {x:20,y:11,w:3,h:1,range:5,speed:1.2},  // 右の移動床
   ]
 },
 // ---------- STAGE 5: 鍵&ドア + サイズ変化 ----------
@@ -347,6 +351,10 @@ const STAGES = [
     [42,8,1,1,TL.SPRING],
     // ゴール
     [44,13,2,2,TL.GOAL],
+  ],
+  movers:[
+    {x:10,y:11,w:4,h:1,range:8,speed:1.5},
+    {x:30,y:9,w:4,h:1,range:6,speed:1.0},
   ]
 },
 ];
@@ -369,6 +377,9 @@ let stageIntroT=0;    // ステージ開始演出フレーム
 
 // 残像（フェーズシフト時に出る）
 let ghosts=[];
+
+// 移動床（各ステージのmovers定義から初期化）
+let movers=[];
 
 // 視差スクロール星
 const STARS=(()=>{
@@ -486,6 +497,18 @@ let prevJ=false, prevSH=false, shiftCD=0;
 function update(){
   if(gameState!=='playing') return;
   fr++;
+
+  // 移動床更新
+  for(const m of movers){
+    const prev=m.x;
+    m.x+=m.speed*m.dir;
+    if(m.x>m.ox+m.range||m.x<m.ox){ m.dir*=-1; m.x=Math.max(m.ox,Math.min(m.ox+m.range,m.x)); }
+    const dx=m.x-prev;
+    // プレイヤーが乗っているか（上面に接触）
+    const px=player.x, py=player.y, pw=player.w, ph=player.h;
+    const overlap=px+pw>m.x&&px<m.x+m.w&&py+ph>=m.y-1&&py+ph<=m.y+4;
+    if(overlap&&!player.dead){ player.x+=dx; player.onGround=true; }
+  }
 
   // 残像更新
   ghosts=ghosts.filter(g=>{ g.life--; return g.life>0; });
@@ -857,6 +880,20 @@ function draw(){
   // タイル
   for(let i=0;i<s.tiles.length;i++) drawTile(s.tiles[i],i);
 
+  // 移動床
+  for(const m of movers){
+    const sc=STAGES[si].solidC||['#445566','#667788','#334455'];
+    ctx.fillStyle=sc[0];ctx.fillRect(m.x,m.y,m.w,m.h);
+    ctx.fillStyle=sc[1];ctx.fillRect(m.x,m.y,m.w,2);
+    ctx.fillStyle=sc[2];ctx.fillRect(m.x,m.y+m.h-2,m.w,2);
+    // 矢印で移動方向を示す
+    ctx.globalAlpha=0.5;
+    ctx.fillStyle='#fff';
+    ctx.font='7px monospace';
+    ctx.fillText(m.dir>0?'▶':'◀',m.x+m.w/2-4,m.y+m.h/2+3);
+    ctx.globalAlpha=1;
+  }
+
   // パーティクル
   for(const p of particles){
     ctx.globalAlpha=p.life/p.maxLife;
@@ -1217,6 +1254,12 @@ function drawStageIntro(s){
 function resetStageState(){
   colKeys=0; colKeySet.clear(); colSmallSet.clear();
   colCheckSet.clear(); checkpoint=null; stageTime=0; fr=0;
+  // 移動床を現在ステージの定義から再生成
+  movers=(STAGES[si].movers||[]).map(m=>({
+    x:m.x*T, y:m.y*T, w:m.w*T, h:m.h*T,
+    ox:m.x*T, range:m.range*T, speed:m.speed||1,
+    dir:1, phase:m.phase||0,
+  }));
 }
 
 function startGame(){
