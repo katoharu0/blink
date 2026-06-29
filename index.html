@@ -500,6 +500,10 @@ function update(){
   // フェーズ切替
   if(shiftCD>0) shiftCD--;
   const nowSH=isSH();
+  if(nowSH&&!prevSH&&shiftCD>0){
+    // CDまだ残っているとき: 短くブザー音
+    beep(180,0.04,'square',0.06);
+  }
   if(nowSH&&!prevSH&&shiftCD===0){
     // 残像を3枚スポーン（シフト前の色で）
     for(let g=0;g<3;g++){
@@ -722,7 +726,15 @@ function checkGimmicks(s,pw,pvh){
       sfxCheck();
     }
 
-    if(type===TL.GOAL&&hit){ clearStage(); return; }
+    if(type===TL.GOAL&&hit){
+      // ゴール時の豪華パーティクル
+      for(let k=0;k<5;k++){
+        addParticle(player.x+player.w/2,player.y+player.h/2,'#fc0',8);
+        addParticle(tx+tw/2,ty+th/2,'#fff',6);
+        addParticle(tx+tw/2,ty+th/2,player.phase===BLUE?'#4af':'#f44',6);
+      }
+      clearStage(); return;
+    }
   }
 }
 
@@ -1040,6 +1052,14 @@ function drawHUD(s){
   const pc=player.phase===BLUE?'#4af':'#f44';
   ctx.fillStyle=pc;ctx.fillRect(GW-40,2,38,16);
   ctx.fillStyle='#fff';ctx.fillText(player.phase===BLUE?'BLUE':' RED',GW-36,13);
+  // SHIFTクールダウンバー（フェーズ表示の下）
+  ctx.fillStyle='rgba(0,0,0,.4)';ctx.fillRect(GW-40,19,38,4);
+  if(shiftCD>0){
+    ctx.fillStyle='rgba(120,120,120,.7)';
+    ctx.fillRect(GW-40,19,38*(shiftCD/15),4);
+  } else {
+    ctx.fillStyle=pc;ctx.fillRect(GW-40,19,38,4);
+  }
   if(s.keys>0){
     ctx.fillStyle='rgba(0,0,0,.5)';ctx.fillRect(2,20,72,14);
     ctx.fillStyle='#fc0';ctx.fillText(`KEY ${colKeys}/${s.keys}`,6,30);
