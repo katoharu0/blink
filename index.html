@@ -360,6 +360,21 @@ let stageIntroT=0;    // ステージ開始演出フレーム
 // 残像（フェーズシフト時に出る）
 let ghosts=[];
 
+// 視差スクロール星
+const STARS=(()=>{
+  const arr=[];
+  for(let i=0;i<90;i++){
+    arr.push({
+      x:Math.random()*GW*4,
+      y:Math.random()*GH*4,
+      sz:Math.random()<0.15?1.5:0.8,
+      pf:0.08+Math.random()*0.25,  // 視差係数（小さいほど遠い）
+      br:0.3+Math.random()*0.5,    // 輝度
+    });
+  }
+  return arr;
+})();
+
 // パーティクル
 let particles=[];
 function addParticle(x,y,color,n=8){
@@ -558,6 +573,9 @@ function update(){
     if(player.onWall!==0&&!player.onGround){
       player.vy=WJSPD.y*player.gravDir;
       player.vx=-player.onWall*WJSPD.x;
+      // 壁ジャンプ時スパーク
+      addParticle(player.x+(player.onWall>0?player.w:0), player.y+player.h/2,
+        player.phase===BLUE?'#88ddff':'#ffaa88', 6);
       player.onWall=0;
     } else {
       player.vy=JSPD*player.gravDir;
@@ -710,8 +728,12 @@ function checkGimmicks(s,pw,pvh){
 
 function killPlayer(){
   if(player.invincible>0) return;
-  addParticle(player.x+player.w/2,player.y+player.h/2,
-    player.phase===BLUE?'#4af':'#f44',16);
+  const cx=player.x+player.w/2, cy=player.y+player.h/2;
+  const c1=player.phase===BLUE?'#4af':'#f44';
+  const c2=player.phase===BLUE?'#88eeff':'#ffaa44';
+  addParticle(cx,cy,c1,18);
+  addParticle(cx,cy,c2,10);
+  addParticle(cx,cy,'#fff',5);
   player.dead=true; player.deadTimer=0;
   camShake=14;
   deathCount++;
@@ -737,7 +759,18 @@ function respawn(){
 function clearStage(){
   gameState='clear'; fr=0;
   sfxGoal();
+  // 自己ベスト更新チェック
+  const key=`blink_best_s${si}`;
+  const prev=Number(localStorage.getItem(key)||0);
+  if(!prev||stageTime<prev){
+    localStorage.setItem(key, stageTime);
+    clearIsNewBest=true;
+  } else {
+    clearIsNewBest=false;
+  }
+  clearBestTime=Number(localStorage.getItem(key));
 }
+let clearIsNewBest=false, clearBestTime=0;
 
 // ================================================================
 //  描画
@@ -746,6 +779,18 @@ function draw(){
   const s=stg();
   ctx.fillStyle=player.phase===BLUE?s.bgB:s.bgR;
   ctx.fillRect(0,0,GW,GH);
+
+  // 視差スクロール星
+  for(const st of STARS){
+    const wx=(st.x-cam.x*st.pf%(GW*4)+GW*4)%(GW*4);
+    const wy=(st.y-cam.y*st.pf%(GH*4)+GH*4)%(GH*4);
+    if(wx<GW&&wy<GH){
+      ctx.globalAlpha=st.br*(0.5+Math.sin(fr*0.03+st.x)*0.2);
+      ctx.fillStyle='#ffffff';
+      ctx.fillRect(wx,wy,st.sz,st.sz);
+    }
+  }
+  ctx.globalAlpha=1;
 
   // グリッド
   ctx.strokeStyle=player.phase===BLUE?'rgba(0,80,200,.06)':'rgba(200,40,40,.06)';
@@ -1007,10 +1052,17 @@ function drawHUD(s){
   ctx.fillText(s.hint,4,GH-4);
   ctx.fillStyle='rgba(0,0,0,.4)';ctx.fillRect(GW-36,GH-14,34,12);
   ctx.fillStyle='#888';ctx.fillText(`${si+1}/${STAGES.length}`,GW-33,GH-5);
-  // タイム
+  // タイム（現在 / ベスト）
   const sec=Math.floor(stageTime/60), ms=String(stageTime%60).padStart(2,'0');
   ctx.fillStyle='rgba(0,0,0,.4)';ctx.fillRect(GW-80,GH-14,40,12);
-  ctx.fillStyle='#666';ctx.fillText(`${sec}:${ms}`,GW-77,GH-5);
+  ctx.fillStyle='#888';ctx.fillText(`${sec}:${ms}`,GW-77,GH-5);
+  const bk=Number(localStorage.getItem(`blink_best_s${si}`)||0);
+  if(bk>0){
+    const bs2=Math.floor(bk/60), bm2=String(bk%60).padStart(2,'0');
+    ctx.fillStyle='rgba(0,0,0,.3)';ctx.fillRect(GW-80,GH-26,40,11);
+    ctx.fillStyle='#0a6';ctx.font='6px monospace';ctx.fillText(`B:${bs2}:${bm2}`,GW-78,GH-17);
+    ctx.font='8px monospace';
+  }
   // 死亡カウンター
   if(deathCount>0){
     ctx.fillStyle='rgba(0,0,0,.4)';ctx.fillRect(GW-124,GH-14,40,12);
@@ -1019,22 +1071,30 @@ function drawHUD(s){
 }
 
 function drawTouchButtons(){
-  const y=GH-44,sz=36;
-  const alpha=.22;
+  const y=GH-46,sz=38;
+  const alpha=.25;
   ctx.globalAlpha=alpha;
   // 左
-  ctx.fillStyle=touch.L?'#fff':'#aaa';rr(4,y,sz,sz,6);ctx.fill();
-  ctx.fillStyle='#333';ctx.font='16px monospace';ctx.fillText('◄',10,y+24);
+  ctx.fillStyle=touch.L?'#fff':'#aaa';rr(4,y,sz,sz,7);ctx.fill();
+  ctx.fillStyle='#000';ctx.font='18px monospace';ctx.fillText('◄',10,y+26);
   // 右
-  ctx.fillStyle=touch.R?'#fff':'#aaa';rr(44,y,sz,sz,6);ctx.fill();
-  ctx.fillStyle='#333';ctx.fillText('►',50,y+24);
-  // SHIFT
-  ctx.fillStyle=touch.S?'#fff':(player.phase===BLUE?'#4af':'#f44');
-  rr(GW-88,y,sz+10,sz,6);ctx.fill();
-  ctx.fillStyle='#fff';ctx.font='8px monospace';ctx.fillText('SHIFT',GW-83,y+22);
+  ctx.fillStyle=touch.R?'#fff':'#aaa';rr(46,y,sz,sz,7);ctx.fill();
+  ctx.fillStyle='#000';ctx.fillText('►',52,y+26);
+  // SHIFT（CDが残っているときは暗く＋プログレス枠表示）
+  const cdRatio=shiftCD/15;
+  ctx.fillStyle=shiftCD>0?'#444':(touch.S?'#fff':(player.phase===BLUE?'#4af':'#f44'));
+  rr(GW-92,y,sz+12,sz,7);ctx.fill();
+  if(shiftCD>0){
+    // CDプログレスバー（ボタン内部）
+    ctx.fillStyle=player.phase===BLUE?'rgba(68,170,255,.6)':'rgba(255,60,60,.6)';
+    ctx.fillRect(GW-92,y+sz*(1-cdRatio),sz+12,sz*cdRatio);
+  }
+  ctx.globalAlpha=alpha*1.3;
+  ctx.fillStyle='#fff';ctx.font='8px monospace';ctx.fillText('SHIFT',GW-86,y+23);
+  ctx.globalAlpha=alpha;
   // JUMP
-  ctx.fillStyle=touch.J?'#fff':'#aaa';rr(GW-44,y,sz,sz,6);ctx.fill();
-  ctx.fillStyle='#333';ctx.font='16px monospace';ctx.fillText('▲',GW-38,y+24);
+  ctx.fillStyle=touch.J?'#fff':'#aaa';rr(GW-46,y,sz,sz,7);ctx.fill();
+  ctx.fillStyle='#000';ctx.font='18px monospace';ctx.fillText('▲',GW-40,y+26);
   ctx.globalAlpha=1;
 }
 
@@ -1050,9 +1110,22 @@ function drawClearScreen(){
   ctx.fillStyle=`rgba(0,0,0,${t*.75})`;ctx.fillRect(0,0,GW,GH);
   ctx.globalAlpha=t;
   ctx.fillStyle='#fc0';ctx.font='bold 26px monospace';ctx.textAlign='center';
-  ctx.fillText('STAGE CLEAR!',GW/2,GH/2-12);
+  ctx.fillText('STAGE CLEAR!',GW/2,GH/2-20);
   ctx.fillStyle='#aaa';ctx.font='11px monospace';
-  ctx.fillText(`PHASE ${si+1} COMPLETE`,GW/2,GH/2+8);
+  ctx.fillText(`PHASE ${si+1} COMPLETE`,GW/2,GH/2-2);
+  // タイム表示
+  const sec=Math.floor(stageTime/60), ms=String(stageTime%60).padStart(2,'0');
+  ctx.fillStyle='#fff';ctx.font='10px monospace';
+  ctx.fillText(`TIME  ${sec}:${ms}`,GW/2,GH/2+14);
+  // ベストタイム
+  const bs=Math.floor(clearBestTime/60), bm=String(clearBestTime%60).padStart(2,'0');
+  if(clearIsNewBest){
+    ctx.fillStyle='#0f8';
+    ctx.fillText(`★ NEW BEST!`,GW/2,GH/2+28);
+  } else {
+    ctx.fillStyle='#888';
+    ctx.fillText(`BEST  ${bs}:${bm}`,GW/2,GH/2+28);
+  }
   ctx.textAlign='left';ctx.globalAlpha=1;
 }
 
