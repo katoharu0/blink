@@ -909,7 +909,34 @@ let clearIsNewBest=false, clearBestTime=0;
 // ================================================================
 //  描画
 // ================================================================
+let titleFr=0; // タイトル画面専用フレームカウンタ
+
+function drawTitle(){
+  titleFr++;
+  // 背景グラデーション（青↔赤サイクル）
+  const t=Math.sin(titleFr*0.012)*0.5+0.5;
+  const bg=`rgb(${Math.round(6+t*24)},${Math.round(6+6*(1-t))},${Math.round(26+6*(1-t))})`;
+  ctx.fillStyle=bg; ctx.fillRect(0,0,GW,GH);
+  // 流れ星
+  for(const st of STARS){
+    const wx=(st.x+titleFr*st.pf*2)%GW;
+    const wy=(st.y)%GH;
+    ctx.globalAlpha=st.br*(0.4+Math.sin(titleFr*0.05+st.x)*0.3);
+    ctx.fillStyle='#ffffff';
+    ctx.fillRect(wx,wy,st.sz,st.sz);
+  }
+  ctx.globalAlpha=1;
+  // 画面下にヒント
+  ctx.fillStyle='rgba(100,150,255,0.15)';
+  ctx.fillRect(0,GH-20,GW,20);
+  ctx.fillStyle='rgba(150,180,255,0.5)';
+  ctx.font='7px monospace';ctx.textAlign='center';
+  ctx.fillText('← → : 移動  |  Space : ジャンプ  |  Q/Z : フェーズ切替  |  X/C : ダッシュ',GW/2,GH-8);
+  ctx.textAlign='left';
+}
+
 function draw(){
+  if(gameState==='title'){ drawTitle(); return; }
   const s=stg();
   ctx.fillStyle=player.phase===BLUE?s.bgB:s.bgR;
   ctx.fillRect(0,0,GW,GH);
@@ -1274,6 +1301,12 @@ function drawHUD(s){
     ctx.fillStyle='rgba(0,0,0,.4)';ctx.fillRect(GW-124,GH-14,40,12);
     ctx.fillStyle='#f66';ctx.fillText(`✕${deathCount}`,GW-121,GH-5);
   }
+  // ダッシュ残量インジケータ（DASH文字の下に小さいドット）
+  const dashCol=player.dashReady?'#ffcc44':'#554400';
+  ctx.fillStyle='rgba(0,0,0,.4)';ctx.fillRect(GW-40,24,38,5);
+  ctx.fillStyle=dashCol;ctx.fillRect(GW-40,24,player.dashReady?38:0,5);
+  ctx.fillStyle='rgba(255,255,255,0.4)';ctx.font='6px monospace';
+  ctx.fillText('DASH',GW-37,29);
 }
 
 function drawTouchButtons(){
