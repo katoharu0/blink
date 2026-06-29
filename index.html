@@ -68,8 +68,39 @@ const TL = {
   KEY:12, DOOR:13,
   RHYTHM:14, GOAL:15,
   ONEWAY:16, CONV_R:17, CONV_L:18,
-  SMALL:19,   // サイズ変化アイテム
+  SMALL:19,
+  CHECK:20,   // チェックポイント（旗）
 };
+
+// ================================================================
+//  WebAudio 効果音
+// ================================================================
+let audioCtx=null;
+function getAudio(){
+  if(!audioCtx) audioCtx=new(window.AudioContext||window.webkitAudioContext)();
+  return audioCtx;
+}
+function beep(freq,dur,type='square',gain=0.18,detune=0){
+  try{
+    const a=getAudio();
+    const o=a.createOscillator(), g=a.createGain();
+    o.connect(g); g.connect(a.destination);
+    o.type=type; o.frequency.value=freq; o.detune.value=detune;
+    g.gain.setValueAtTime(gain,a.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001,a.currentTime+dur);
+    o.start(); o.stop(a.currentTime+dur);
+  }catch(e){}
+}
+function sfxJump(){ beep(320,0.12,'square',0.14); beep(480,0.08,'square',0.08); }
+function sfxShift(){
+  beep(player.phase===BLUE?600:300,0.06,'sawtooth',0.12);
+  beep(player.phase===BLUE?900:200,0.1,'sawtooth',0.08);
+}
+function sfxDie(){ beep(180,0.1,'sawtooth',0.2); beep(100,0.25,'sawtooth',0.15,-300); }
+function sfxKey(){ beep(880,0.05,'sine',0.2); beep(1100,0.1,'sine',0.15); }
+function sfxGoal(){ [660,770,880,1100].forEach((f,i)=>setTimeout(()=>beep(f,.15,'sine',.2),i*60)); }
+function sfxSpring(){ beep(440,0.04,'square',0.15); beep(660,0.08,'square',0.12); beep(880,0.1,'sine',0.1); }
+function sfxCheck(){ beep(550,0.06,'sine',0.18); beep(660,0.12,'sine',0.15); }
 
 // ================================================================
 //  ステージデータ
@@ -91,6 +122,8 @@ const STAGES = [
     [6,12,3,1,TL.RED],  [11,10,3,1,TL.RED],  [16,8,3,1,TL.RED],  [22,10,3,1,TL.RED],
     // トゲ
     [7,13,2,1,TL.SPIKE],[12,13,2,1,TL.SPIKE],[18,13,2,1,TL.SPIKE],
+    // チェックポイント（中間旗）
+    [16,13,1,2,TL.CHECK],
     // ゴール
     [26,13,2,2,TL.GOAL],
   ]
@@ -113,6 +146,8 @@ const STAGES = [
     [3,12,2,1,TL.RED],[9,11,2,1,TL.RED],[12,5,2,1,TL.RED],[21,11,2,1,TL.RED],
     // トゲ
     [11,13,3,1,TL.SPIKE],
+    // チェックポイント
+    [14,13,1,2,TL.CHECK],
     // ゴール
     [24,13,2,2,TL.GOAL],
   ]
@@ -143,6 +178,8 @@ const STAGES = [
     [5,7,2,1,TL.RED],[22,6,2,1,TL.RED],
     // トゲ
     [7,13,3,1,TL.SPIKE],[17,13,3,1,TL.SPIKE],
+    // チェックポイント
+    [22,13,1,2,TL.CHECK],
     // ゴール
     [31,13,2,2,TL.GOAL],
   ]
@@ -168,6 +205,8 @@ const STAGES = [
     [5,8,2,1,TL.RED],[15,6,2,1,TL.RED],[25,6,2,1,TL.RED],
     // バネ
     [27,13,1,1,TL.SPRING],
+    // チェックポイント
+    [15,13,1,2,TL.CHECK],
     // トゲ
     [9,13,2,1,TL.SPIKE],
     // ゴール
@@ -199,6 +238,8 @@ const STAGES = [
     [30,8,3,1,TL.CONV_R],
     // 風（縦）
     [22,9,3,5,TL.WINDU],
+    // チェックポイント
+    [18,13,1,2,TL.CHECK],
     // トゲ
     [10,13,3,1,TL.SPIKE],[21,13,3,1,TL.SPIKE],
     // ゴール（ドアの先）
@@ -237,6 +278,8 @@ const STAGES = [
     [35,11,3,1,TL.BLUE],[38,9,3,1,TL.RED],
     [35,8,2,1,TL.ONEWAY],[40,11,2,1,TL.ONEWAY],
     [42,9,3,1,TL.SOLID],
+    // チェックポイント×2
+    [20,13,1,2,TL.CHECK],[32,13,1,2,TL.CHECK],
     // トゲ
     [13,13,2,1,TL.SPIKE],[24,13,2,1,TL.SPIKE],[36,13,3,1,TL.SPIKE],
     // バネ（後半）
@@ -256,6 +299,9 @@ let cam={x:0,y:0};
 let colKeys=0;
 let colKeySet=new Set();
 let colSmallSet=new Set();
+let colCheckSet=new Set();
+let checkpoint=null;  // {x,y} リスポーン地点
+let stageTime=0;      // ステージ経過フレーム
 
 // パーティクル
 let particles=[];
@@ -319,6 +365,8 @@ function initPlayer(){
     animF:0, animT:0,
     small:false, smallTimer:0,
     prevJ:false, prevSH:false,
+    coyoteTimer:0,    // コヨーテタイム（崖端ジャンプ猶予）
+    jumpBuffer:0,     // ジャンプバッファ（少し早押しでもジャンプ）
   };
 }
 
@@ -336,6 +384,7 @@ function isSolid(type){
          type===TL.RHYTHM||type===TL.CONV_R||type===TL.CONV_L||type===TL.ONEWAY;
 }
 function rhythmOn(){ return (fr%90)<52; }
+function canJumpNow(){ return player.onGround||player.coyoteTimer>0||(player.onWall!==0&&!player.onGround); }
 
 // タイルIDキー（ステージ跨ぎ対策）
 function tileId(tile){ return tile[0]*1000+tile[1]; }
@@ -377,6 +426,7 @@ function update(){
     player.shiftFlash=10;
     addParticle(player.x+player.w/2, player.y+player.h/2,
       player.phase===BLUE?'#4af':'#f44',12);
+    sfxShift();
   }
   prevSH=nowSH;
   if(player.shiftFlash>0) player.shiftFlash--;
@@ -424,17 +474,27 @@ function update(){
   player.vy+=GRAV*player.gravDir;
   player.vy=Math.max(-10,Math.min(10,player.vy));
 
-  // ジャンプ
+  // コヨーテタイム管理
+  if(player.onGround) player.coyoteTimer=8;
+  else if(player.coyoteTimer>0) player.coyoteTimer--;
+
+  // ジャンプバッファ管理
   const nowJ=isJ();
-  if(nowJ&&!prevJ){
-    if(player.onGround){
-      player.vy=JSPD*player.gravDir;
-      player.onGround=false;
-    } else if(player.onWall!==0){
+  if(nowJ&&!prevJ) player.jumpBuffer=10;
+  else if(player.jumpBuffer>0) player.jumpBuffer--;
+
+  if(player.jumpBuffer>0&&canJumpNow()){
+    if(player.onWall!==0&&!player.onGround){
       player.vy=WJSPD.y*player.gravDir;
       player.vx=-player.onWall*WJSPD.x;
       player.onWall=0;
+    } else {
+      player.vy=JSPD*player.gravDir;
+      player.onGround=false;
+      player.coyoteTimer=0;
     }
+    player.jumpBuffer=0;
+    sfxJump();
   }
   prevJ=nowJ;
 
@@ -528,6 +588,7 @@ function checkGimmicks(s,pw,pvh){
       player.vy=JSPD*2.5*player.gravDir;
       player.onGround=false;
       addParticle(tx+tw/2,ty,'#4f8',8);
+      sfxSpring();
     }
 
     if((type===TL.PORTA||type===TL.PORTB)&&softHit&&player.portalCD===0){
@@ -545,12 +606,21 @@ function checkGimmicks(s,pw,pvh){
     if(type===TL.KEY&&!colKeySet.has(i)&&hit){
       colKeySet.add(i); colKeys++;
       addParticle(tx+tw/2,ty+th/2,'#fc0',10);
+      sfxKey();
     }
 
     if(type===TL.SMALL&&!colSmallSet.has(i)&&hit){
       colSmallSet.add(i);
       player.small=true; player.smallTimer=300;
       addParticle(tx+tw/2,ty+th/2,'#f8f',8);
+      sfxKey();
+    }
+
+    if(type===TL.CHECK&&!colCheckSet.has(i)&&hit){
+      colCheckSet.add(i);
+      checkpoint={x:tx,y:ty};
+      addParticle(tx+tw/2,ty,'#0f8',10);
+      sfxCheck();
     }
 
     if(type===TL.GOAL&&hit){ clearStage(); return; }
@@ -562,15 +632,28 @@ function killPlayer(){
   addParticle(player.x+player.w/2,player.y+player.h/2,
     player.phase===BLUE?'#4af':'#f44',16);
   player.dead=true; player.deadTimer=0;
+  sfxDie();
 }
 
 function respawn(){
+  const prevPhase=player.phase;
   initPlayer();
-  colKeys=0; colKeySet.clear(); colSmallSet.clear();
+  player.phase=prevPhase;  // フェーズはリセットしない
+  // チェックポイントがあれば鍵をリセットせずそこからリスポーン
+  if(checkpoint){
+    player.x=checkpoint.x;
+    player.y=checkpoint.y-player.h;
+    // 鍵はチェックポイント到達後に取ったものだけリセット
+    // シンプルにするため鍵もそのまま保持（死んでも鍵は消えない）
+  } else {
+    colKeys=0; colKeySet.clear();
+  }
+  colSmallSet.clear();
 }
 
 function clearStage(){
   gameState='clear'; fr=0;
+  sfxGoal();
 }
 
 // ================================================================
@@ -735,6 +818,22 @@ function drawTile(tile,idx){
         ctx.textAlign='left';
       }
       break;
+    case TL.CHECK:{
+      const activated=colCheckSet.has(idx);
+      // 旗ポール
+      ctx.fillStyle=activated?'#88ff88':'#888';
+      ctx.fillRect(rx+rw/2-1,ry,2,rh);
+      // 旗
+      ctx.fillStyle=activated?'#00ff88':'#555';
+      ctx.beginPath();
+      const flagWave=activated?Math.sin(fr*.15)*2:0;
+      ctx.moveTo(rx+rw/2+1,ry+2);
+      ctx.lineTo(rx+rw/2+8+flagWave,ry+5);
+      ctx.lineTo(rx+rw/2+1,ry+9);
+      ctx.fill();
+      // 台座
+      ctx.fillStyle='#666';ctx.fillRect(rx+rw/2-4,ry+rh-2,8,2);
+      break;}
   }
 }
 
@@ -810,6 +909,10 @@ function drawHUD(s){
   ctx.fillText(s.hint,4,GH-4);
   ctx.fillStyle='rgba(0,0,0,.4)';ctx.fillRect(GW-36,GH-14,34,12);
   ctx.fillStyle='#888';ctx.fillText(`${si+1}/${STAGES.length}`,GW-33,GH-5);
+  // タイム
+  const sec=Math.floor(stageTime/60), ms=String(stageTime%60).padStart(2,'0');
+  ctx.fillStyle='rgba(0,0,0,.4)';ctx.fillRect(GW-80,GH-14,40,12);
+  ctx.fillStyle='#666';ctx.fillText(`${sec}:${ms}`,GW-77,GH-5);
 }
 
 function drawTouchButtons(){
@@ -853,8 +956,13 @@ function drawClearScreen(){
 // ================================================================
 //  ステートマシン
 // ================================================================
+function resetStageState(){
+  colKeys=0; colKeySet.clear(); colSmallSet.clear();
+  colCheckSet.clear(); checkpoint=null; stageTime=0; fr=0;
+}
+
 function startGame(){
-  si=0; colKeys=0; colKeySet.clear(); colSmallSet.clear(); fr=0;
+  si=0; resetStageState();
   initPlayer(); cam.x=0; cam.y=0;
   gameState='playing';
   document.getElementById('ov').classList.add('hidden');
@@ -871,7 +979,7 @@ function nextStage(){
     document.getElementById('ov').classList.remove('hidden');
     gameState='title'; return;
   }
-  colKeys=0; colKeySet.clear(); colSmallSet.clear(); fr=0;
+  resetStageState();
   initPlayer(); cam.x=0; cam.y=0;
   gameState='playing';
 }
@@ -886,6 +994,7 @@ const stg0=STAGES[0]; si=0; initPlayer();
 function loop(){
   update();
   draw();
+  if(gameState==='playing') stageTime++;
   if(gameState==='clear'&&fr>100) nextStage();
   requestAnimationFrame(loop);
 }
