@@ -302,6 +302,9 @@ let colSmallSet=new Set();
 let colCheckSet=new Set();
 let checkpoint=null;  // {x,y} リスポーン地点
 let stageTime=0;      // ステージ経過フレーム
+let camShake=0;       // カメラシェイク残フレーム
+let deathCount=0;     // 死亡回数
+let stageIntroT=0;    // ステージ開始演出フレーム
 
 // パーティクル
 let particles=[];
@@ -367,6 +370,8 @@ function initPlayer(){
     prevJ:false, prevSH:false,
     coyoteTimer:0,    // コヨーテタイム（崖端ジャンプ猶予）
     jumpBuffer:0,     // ジャンプバッファ（少し早押しでもジャンプ）
+    scaleY:1,         // スクワッシュ＆ストレッチ用縦スケール
+    prevVy:0,         // 前フレームの縦速度（着地判定用）
   };
 }
 
@@ -494,6 +499,7 @@ function update(){
       player.coyoteTimer=0;
     }
     player.jumpBuffer=0;
+    player.scaleY=0.65;  // ジャンプ時に横に潰れる
     sfxJump();
   }
   prevJ=nowJ;
@@ -520,11 +526,19 @@ function update(){
     if(player.animT>6){ player.animT=0; player.animF=(player.animF+1)%4; }
   } else player.animF=0;
 
+  // スクワッシュ＆ストレッチを1に収束
+  player.scaleY+=(1-player.scaleY)*0.22;
+
   // カメラ
   const tx2=player.x+pw/2-GW/2, ty2=player.y+pvh/2-GH/2;
   cam.x+=(tx2-cam.x)*0.12; cam.y+=(ty2-cam.y)*0.12;
   cam.x=Math.max(0,Math.min(s.ww*T-GW,cam.x));
   cam.y=Math.max(0,Math.min(s.wh*T-GH,cam.y));
+
+  // camShake減算
+  if(camShake>0) camShake--;
+  // stageIntro減算
+  if(stageIntroT>0) stageIntroT--;
 }
 
 function solveX(s,pw,pvh){
@@ -563,6 +577,7 @@ function solveY(s,pw,pvh){
     if(player.x+2<tx+tw&&player.x+pw-2>tx&&player.y<ty+th&&player.y+pvh>ty){
       if(player.vy*player.gravDir>0){
         player.y=player.gravDir>0? ty-pvh : ty+th;
+        if(Math.abs(player.vy)>3) player.scaleY=1.4;  // 着地スクワッシュ
         player.vy=0; player.onGround=true;
       } else {
         player.y=player.gravDir>0? ty+th : ty-pvh;
@@ -632,6 +647,8 @@ function killPlayer(){
   addParticle(player.x+player.w/2,player.y+player.h/2,
     player.phase===BLUE?'#4af':'#f44',16);
   player.dead=true; player.deadTimer=0;
+  camShake=14;
+  deathCount++;
   sfxDie();
 }
 
@@ -671,7 +688,10 @@ function draw(){
   for(let y=(-cam.y%T+T)%T;y<GH;y+=T){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(GW,y);ctx.stroke();}
 
   ctx.save();
-  ctx.translate(-cam.x,-cam.y);
+  // 死亡シェイク
+  const sx=camShake>0?(Math.random()-.5)*camShake*.8:0;
+  const sy=camShake>0?(Math.random()-.5)*camShake*.6:0;
+  ctx.translate(-cam.x+sx,-cam.y+sy);
 
   // タイル
   for(let i=0;i<s.tiles.length;i++) drawTile(s.tiles[i],i);
@@ -697,6 +717,7 @@ function draw(){
   }
 
   if(gameState==='clear') drawClearScreen();
+  if(stageIntroT>0) drawStageIntro(s);
 }
 
 function drawTile(tile,idx){
@@ -873,6 +894,9 @@ function drawPlayer(){
   ctx.translate(px+pw/2,py+pvh/2);
   if(player.gravDir<0) ctx.scale(1,-1);
   if(!player.facingR) ctx.scale(-1,1);
+  // スクワッシュ＆ストレッチ（横は逆比率で体積を保つ）
+  const sy=player.scaleY||1, sx2=1+(1-sy)*0.5;
+  ctx.scale(sx2,sy);
   ctx.translate(-pw/2,-pvh/2);
 
   const body=player.phase===BLUE?'#3388ff':'#ff3333';
@@ -913,6 +937,11 @@ function drawHUD(s){
   const sec=Math.floor(stageTime/60), ms=String(stageTime%60).padStart(2,'0');
   ctx.fillStyle='rgba(0,0,0,.4)';ctx.fillRect(GW-80,GH-14,40,12);
   ctx.fillStyle='#666';ctx.fillText(`${sec}:${ms}`,GW-77,GH-5);
+  // 死亡カウンター
+  if(deathCount>0){
+    ctx.fillStyle='rgba(0,0,0,.4)';ctx.fillRect(GW-124,GH-14,40,12);
+    ctx.fillStyle='#f66';ctx.fillText(`✕${deathCount}`,GW-121,GH-5);
+  }
 }
 
 function drawTouchButtons(){
@@ -953,6 +982,24 @@ function drawClearScreen(){
   ctx.textAlign='left';ctx.globalAlpha=1;
 }
 
+function drawStageIntro(s){
+  const DUR=90;
+  const t=stageIntroT/DUR;
+  // フェードイン→フェードアウト
+  const alpha=t>0.6?((1-t)/0.4):(t>0.2?1:(t/0.2));
+  // スライドイン（左から）
+  const offX=(t>0.5?0:(0.5-t)/0.5)*-120;
+  ctx.globalAlpha=alpha*0.9;
+  ctx.fillStyle='rgba(0,0,0,.7)';
+  ctx.fillRect(offX+GW/2-110,GH/2-26,220,52);
+  ctx.fillStyle=player.phase===BLUE?'#4af':'#f44';
+  ctx.font='bold 13px monospace';ctx.textAlign='center';
+  ctx.fillText(s.name,offX+GW/2,GH/2-8);
+  ctx.fillStyle='#999';ctx.font='9px monospace';
+  ctx.fillText(s.hint,offX+GW/2,GH/2+10);
+  ctx.textAlign='left';ctx.globalAlpha=1;
+}
+
 // ================================================================
 //  ステートマシン
 // ================================================================
@@ -963,8 +1010,10 @@ function resetStageState(){
 
 function startGame(){
   si=0; resetStageState();
+  deathCount=0;
   initPlayer(); cam.x=0; cam.y=0;
   gameState='playing';
+  stageIntroT=90;
   document.getElementById('ov').classList.add('hidden');
 }
 
@@ -972,7 +1021,7 @@ function nextStage(){
   si++;
   if(si>=STAGES.length){
     document.getElementById('ov-title').textContent='COMPLETE!';
-    document.getElementById('ov-sub').textContent='全6ステージクリア！おめでとう！';
+    document.getElementById('ov-sub').textContent=`全6ステージクリア！おめでとう！\n死亡回数: ${deathCount}回`;
     document.getElementById('ov-ctrl').textContent='';
     document.getElementById('ov-btn').textContent='もう一度';
     document.getElementById('ov-btn').onclick=startGame;
@@ -982,6 +1031,7 @@ function nextStage(){
   resetStageState();
   initPlayer(); cam.x=0; cam.y=0;
   gameState='playing';
+  stageIntroT=90;
 }
 
 document.getElementById('ov-btn').addEventListener('click',startGame);
