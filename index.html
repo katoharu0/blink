@@ -165,6 +165,7 @@ const STAGES = [
 // ---------- STAGE 1: フェーズシフト入門 ----------
 {
   name:'PHASE 1 — SHIFT', hint:'Q/Z で2つの次元を切り替えろ',
+  solidC:['#445566','#667788','#334455'],
   bgB:'#060d1a', bgR:'#1a0606', ww:30, wh:17,
   start:[1.5*T,11*T], keys:0,
   tiles:[
@@ -186,6 +187,7 @@ const STAGES = [
 // ---------- STAGE 2: 重力反転 ----------
 {
   name:'PHASE 2 — GRAVITY', hint:'重力反転ゾーン（紫）では上下が逆になる',
+  solidC:['#3d4a2a','#5a6e3c','#2b3a1a'],
   bgB:'#060d14', bgR:'#14060d', ww:28, wh:17,
   start:[1.5*T,12*T], keys:0,
   tiles:[
@@ -210,6 +212,7 @@ const STAGES = [
 // ---------- STAGE 3: ポータル + 風 ----------
 {
   name:'PHASE 3 — PORTAL', hint:'シアン=A・マゼンタ=B ポータルで瞬間移動。風に乗れ',
+  solidC:['#2a3a4a','#446688','#1a2a3a'],
   bgB:'#060a1a', bgR:'#1a060a', ww:35, wh:17,
   start:[1.5*T,12*T], keys:0,
   tiles:[
@@ -242,6 +245,7 @@ const STAGES = [
 // ---------- STAGE 4: リズム + コンベア + 一方通行 ----------
 {
   name:'PHASE 4 — RHYTHM', hint:'点滅するオレンジブロック（リズム）に注意。コンベアは滑る',
+  solidC:['#4a3520','#6e5030','#2a1e10'],
   bgB:'#04100a', bgR:'#100a04', ww:32, wh:17,
   start:[1.5*T,12*T], keys:0,
   tiles:[
@@ -271,6 +275,7 @@ const STAGES = [
 // ---------- STAGE 5: 鍵&ドア + サイズ変化 ----------
 {
   name:'PHASE 5 — KEY', hint:'鍵を3つ集めてドアを開けろ。SMALLで小さくなれ',
+  solidC:['#3a2a4a','#5a4070','#22183a'],
   bgB:'#080014', bgR:'#140008', ww:40, wh:17,
   start:[1.5*T,12*T], keys:3,
   tiles:[
@@ -304,6 +309,7 @@ const STAGES = [
 // ---------- STAGE 6: 全部盛り FINAL ----------
 {
   name:'PHASE 6 — FINAL', hint:'全ギミック総動員！集中して！',
+  solidC:['#4a1a1a','#781e1e','#2a0a0a'],
   bgB:'#040410', bgR:'#100404', ww:48, wh:17,
   start:[1.5*T,12*T], keys:1,
   tiles:[
@@ -887,11 +893,13 @@ function drawTile(tile,idx){
   const [tx,ty,tw,th,type]=tile;
   const rx=tx*T,ry=ty*T,rw=tw*T,rh=th*T;
   switch(type){
-    case TL.SOLID:
-      ctx.fillStyle='#445566';ctx.fillRect(rx,ry,rw,rh);
-      ctx.fillStyle='#667788';ctx.fillRect(rx,ry,rw,2);
-      ctx.fillStyle='#334455';ctx.fillRect(rx,ry+rh-2,rw,2);
-      break;
+    case TL.SOLID:{
+      const sc=STAGES[si].solidC||['#445566','#667788','#334455'];
+      ctx.fillStyle=sc[0];ctx.fillRect(rx,ry,rw,rh);
+      ctx.fillStyle=sc[1];ctx.fillRect(rx,ry,rw,2);
+      ctx.fillStyle=sc[2];ctx.fillRect(rx,ry+rh-2,rw,2);
+      break;}
+
     case TL.BLUE:
       if(player.phase===BLUE){
         ctx.fillStyle='#1a60ff';ctx.fillRect(rx,ry,rw,rh);
