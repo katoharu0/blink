@@ -505,6 +505,19 @@ function tileId(tile){ return tile[0]*1000+tile[1]; }
 let prevJ=false, prevSH=false, shiftCD=0;
 
 function update(){
+  // クリア画面中もパーティクルと花火を更新
+  if(gameState==='clear'){
+    fr++;
+    particles=particles.filter(p=>{
+      p.x+=p.vx; p.y+=p.vy; p.vy+=0.06; p.life--;
+      return p.life>0;
+    });
+    if(fr%40===0) fireworks(
+      GW/2+(-1+Math.random()*2)*60,
+      GH/2+(-1+Math.random()*2)*40, 16
+    );
+    return;
+  }
   if(gameState!=='playing') return;
   fr++;
 
@@ -855,9 +868,26 @@ function respawn(){
   colSmallSet.clear();
 }
 
+function fireworks(cx,cy,n=24){
+  for(let i=0;i<n;i++){
+    const a=Math.random()*Math.PI*2;
+    const spd=2+Math.random()*5;
+    const colors=['#ffe000','#ff6600','#ff44aa','#44ffcc','#88aaff','#ffffff'];
+    const col=colors[Math.floor(Math.random()*colors.length)];
+    particles.push({
+      x:cx, y:cy,
+      vx:Math.cos(a)*spd, vy:Math.sin(a)*spd-2,
+      life:40+Math.random()*30, maxLife:70,
+      color:col, big:Math.random()<0.3,
+    });
+  }
+}
+
 function clearStage(){
   gameState='clear'; fr=0;
   sfxGoal();
+  // ゴール位置で花火
+  fireworks(GW/2,GH/2,30);
   // 自己ベスト更新チェック
   const key=`blink_best_s${si}`;
   const prev=Number(localStorage.getItem(key)||0);
@@ -944,7 +974,8 @@ function draw(){
   for(const p of particles){
     ctx.globalAlpha=p.life/p.maxLife;
     ctx.fillStyle=p.color;
-    ctx.fillRect(p.x-2,p.y-2,4,4);
+    const sz=p.big?4:2;
+    ctx.fillRect(p.x-sz,p.y-sz,sz*2,sz*2);
   }
   ctx.globalAlpha=1;
 
@@ -968,7 +999,19 @@ function draw(){
     ctx.fillRect(0,0,GW,GH);
   }
 
-  if(gameState==='clear') drawClearScreen();
+  if(gameState==='clear'){
+    // クリア中のパーティクル（花火）を画面座標で描画
+    ctx.save();
+    for(const p of particles){
+      ctx.globalAlpha=p.life/p.maxLife;
+      ctx.fillStyle=p.color;
+      const sz=p.big?4:2;
+      ctx.fillRect(p.x-sz,p.y-sz,sz*2,sz*2);
+    }
+    ctx.globalAlpha=1;
+    ctx.restore();
+    drawClearScreen();
+  }
   if(stageIntroT>0) drawStageIntro(s);
 }
 
