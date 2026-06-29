@@ -207,6 +207,9 @@ const STAGES = [
     [14,13,1,2,TL.CHECK],
     // ゴール
     [24,13,2,2,TL.GOAL],
+  ],
+  enemies:[
+    {x:10,y:12,range:4,speed:0.8},
   ]
 },
 // ---------- STAGE 3: ポータル + 風 ----------
@@ -308,6 +311,10 @@ const STAGES = [
     [10,13,3,1,TL.SPIKE],[21,13,3,1,TL.SPIKE],
     // ゴール（ドアの先）
     [37,13,2,2,TL.GOAL],
+  ],
+  enemies:[
+    {x:8,y:12,range:5,speed:1.0},
+    {x:25,y:12,range:4,speed:1.2},
   ]
 },
 // ---------- STAGE 6: 全部盛り FINAL ----------
@@ -380,6 +387,9 @@ let ghosts=[];
 
 // 移動床（各ステージのmovers定義から初期化）
 let movers=[];
+
+// 敵（各ステージのenemies定義から初期化）
+let enemies=[];
 
 // 視差スクロール星
 const STARS=(()=>{
@@ -508,6 +518,22 @@ function update(){
     const px=player.x, py=player.y, pw=player.w, ph=player.h;
     const overlap=px+pw>m.x&&px<m.x+m.w&&py+ph>=m.y-1&&py+ph<=m.y+4;
     if(overlap&&!player.dead){ player.x+=dx; player.onGround=true; }
+  }
+
+  // 敵更新
+  for(const e of enemies){
+    // フェーズ限定の敵は現フェーズ以外スキップ
+    if(e.phase!==0&&e.phase!==player.phase) continue;
+    e.x+=e.speed*e.dir;
+    e.animT++;
+    if(e.x>e.ox+e.range||e.x<e.ox){ e.dir*=-1; e.x=Math.max(e.ox,Math.min(e.ox+e.range,e.x)); }
+    // プレイヤーとの当たり判定
+    if(!player.dead&&player.invincible<=0){
+      const px=player.x,py=player.y,pw=player.w,ph=player.h;
+      if(px+pw>e.x&&px<e.x+e.w&&py+ph>e.y&&py<e.y+e.h){
+        killPlayer();
+      }
+    }
   }
 
   // 残像更新
@@ -879,6 +905,26 @@ function draw(){
 
   // タイル
   for(let i=0;i<s.tiles.length;i++) drawTile(s.tiles[i],i);
+
+  // 敵
+  for(const e of enemies){
+    if(e.phase!==0&&e.phase!==player.phase) continue;
+    const bob=Math.sin(e.animT*0.12)*1.5;
+    // 本体（丸っこい三角形っぽい敵）
+    ctx.fillStyle='#ff6600';
+    ctx.beginPath();
+    ctx.moveTo(e.x+e.w/2,e.y+bob);
+    ctx.lineTo(e.x+e.w,e.y+e.h+bob);
+    ctx.lineTo(e.x,e.y+e.h+bob);
+    ctx.closePath();ctx.fill();
+    // 目（白目+黒目）
+    ctx.fillStyle='#fff';ctx.fillRect(e.x+2,e.y+4+bob,3,3);
+    ctx.fillStyle='#111';ctx.fillRect(e.dir>0?e.x+3:e.x+2,e.y+5+bob,2,2);
+    // 足（点滅）
+    ctx.fillStyle='#ff4400';
+    ctx.fillRect(e.x+1,e.y+e.h+bob,3,2);
+    ctx.fillRect(e.x+e.w-4,e.y+e.h+bob,3,2);
+  }
 
   // 移動床
   for(const m of movers){
@@ -1277,6 +1323,13 @@ function resetStageState(){
     x:m.x*T, y:m.y*T, w:m.w*T, h:m.h*T,
     ox:m.x*T, range:m.range*T, speed:m.speed||1,
     dir:1, phase:m.phase||0,
+  }));
+  // 敵を現在ステージの定義から再生成
+  enemies=(STAGES[si].enemies||[]).map(e=>({
+    x:e.x*T, y:e.y*T, w:10, h:10,
+    ox:e.x*T, range:e.range*T, speed:e.speed||1,
+    dir:1, animT:0,
+    phase:e.phase||0,  // 0=両方に出る、BLUE/RED=そのフェーズのみ
   }));
 }
 
