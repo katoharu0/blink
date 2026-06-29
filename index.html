@@ -23,9 +23,9 @@ canvas{display:block;image-rendering:pixelated;touch-action:none}
   <h1 id="ov-title">BLINK</h1>
   <p class="sub" id="ov-sub">2つの次元を「瞬く」ように切り替えて進め<br>青と赤の世界それぞれに秘密のギミックがある</p>
   <p class="ctrl" id="ov-ctrl">
-    ← → / A D : 移動 &nbsp;|&nbsp; Space / ↑ / W : ジャンプ &nbsp;|&nbsp; Q / Z : フェーズ切替<br>
-    壁に張り付いてジャンプ：壁ジャンプ<br>
-    スマホ：画面左下=移動 / 右下=SHIFT&JUMP
+    ← → / A D : 移動 &nbsp;|&nbsp; Space / ↑ / W : ジャンプ &nbsp;|&nbsp; Q / Z : フェーズ切替 &nbsp;|&nbsp; X / C : ダッシュ<br>
+    壁に張り付いてジャンプ：壁ジャンプ &nbsp;|&nbsp; エアダッシュは空中1回のみ（着地でリセット）<br>
+    スマホ：画面左下=移動 / 中央=DASH / 右下=SHIFT&JUMP
   </p>
   <button id="ov-btn">START</button>
 </div>
@@ -101,6 +101,10 @@ function sfxKey(){ beep(880,0.05,'sine',0.2); beep(1100,0.1,'sine',0.15); }
 function sfxGoal(){ [660,770,880,1100].forEach((f,i)=>setTimeout(()=>beep(f,.15,'sine',.2),i*60)); }
 function sfxSpring(){ beep(440,0.04,'square',0.15); beep(660,0.08,'square',0.12); beep(880,0.1,'sine',0.1); }
 function sfxCheck(){ beep(550,0.06,'sine',0.18); beep(660,0.12,'sine',0.15); }
+function sfxDash(){
+  beep(800,0.04,'sawtooth',0.12,200);
+  beep(600,0.08,'sawtooth',0.08,-100);
+}
 
 // ---- BGM スケジューラ（チップチューン風ループ） ----
 let bgmNext=0, bgmStep=0, bgmOn=false;
@@ -391,18 +395,19 @@ const K={};
 addEventListener('keydown',e=>{K[e.code]=true; if(['Space','ArrowUp','ArrowDown'].includes(e.code))e.preventDefault();});
 addEventListener('keyup',e=>{K[e.code]=false;});
 
-const touch={L:false,R:false,J:false,S:false};
+const touch={L:false,R:false,J:false,S:false,D:false};
 function touchZone(cx,cy){
   const gx=cx/scale, gy=cy/scale;
-  if(gy<GH*0.55) return null;
-  if(gx<GW*0.18) return 'L';
-  if(gx<GW*0.36) return 'R';
-  if(gx>GW*0.60&&gx<GW*0.78) return 'S';
-  if(gx>GW*0.78) return 'J';
+  if(gy<GH*0.52) return null;
+  if(gx<GW*0.16) return 'L';
+  if(gx<GW*0.32) return 'R';
+  if(gx>GW*0.38&&gx<GW*0.54) return 'D';  // エアダッシュ（中央）
+  if(gx>GW*0.58&&gx<GW*0.76) return 'S';
+  if(gx>GW*0.76) return 'J';
   return null;
 }
 function applyTouches(e){
-  touch.L=touch.R=touch.J=touch.S=false;
+  touch.L=touch.R=touch.J=touch.S=touch.D=false;
   for(const t of e.touches){
     const z=touchZone(t.clientX,t.clientY);
     if(z) touch[z]=true;
@@ -416,6 +421,7 @@ const isL=()=>K.ArrowLeft||K.KeyA||touch.L;
 const isR=()=>K.ArrowRight||K.KeyD||touch.R;
 const isJ=()=>K.Space||K.ArrowUp||K.KeyW||touch.J;
 const isSH=()=>K.KeyQ||K.KeyZ||touch.S;
+const isDA=()=>K.KeyX||K.KeyC||touch.D;
 
 // ================================================================
 //  プレイヤー初期化
@@ -441,6 +447,9 @@ function initPlayer(){
     jumpBuffer:0,     // ジャンプバッファ（少し早押しでもジャンプ）
     scaleY:1,         // スクワッシュ＆ストレッチ用縦スケール
     prevVy:0,         // 前フレームの縦速度（着地判定用）
+    dashReady:true,   // エアダッシュ使用可能か
+    dashTimer:0,      // ダッシュ中フレーム数（>0でダッシュ中）
+    prevDA:false,     // 前フレームのダッシュ入力
   };
 }
 
@@ -591,6 +600,29 @@ function update(){
     sfxJump();
   }
   prevJ=nowJ;
+
+  // エアダッシュ
+  if(player.onGround) player.dashReady=true;
+  if(player.dashTimer>0){ player.dashTimer--; player.invincible=Math.max(player.invincible,player.dashTimer+1); }
+  const nowDA=isDA();
+  if(nowDA&&!player.prevDA&&player.dashReady&&!player.onGround){
+    const dir=player.facingR?1:-1;
+    player.vx=dir*9;
+    player.vy=player.vy*0.3;  // 縦速度を少し殺す
+    player.dashTimer=10;
+    player.dashReady=false;
+    player.scaleY=0.5;
+    // ダッシュ残像を4枚
+    for(let d=0;d<4;d++) ghosts.push({
+      x:player.x-dir*d*6, y:player.y, w:player.w, h:player.h,
+      color:player.phase===BLUE?'#3388ff':'#ff3333',
+      life:12-d*3, maxLife:12
+    });
+    addParticle(player.x+player.w/2,player.y+player.h/2,
+      player.phase===BLUE?'#88ccff':'#ffaa66',8);
+    sfxDash();
+  }
+  player.prevDA=nowDA;
 
   // X移動 → 衝突
   player.x+=player.vx;
@@ -1100,6 +1132,10 @@ function drawTouchButtons(){
   // 右
   ctx.fillStyle=touch.R?'#fff':'#aaa';rr(46,y,sz,sz,7);ctx.fill();
   ctx.fillStyle='#000';ctx.fillText('►',52,y+26);
+  // DASH（中央）
+  const dashCol=!player.dashReady?'#444':(touch.D?'#fff':'#fc8');
+  ctx.fillStyle=dashCol;rr(GW/2-20,y,40,sz,7);ctx.fill();
+  ctx.fillStyle='#000';ctx.font='8px monospace';ctx.fillText('DASH',GW/2-13,y+23);
   // SHIFT（CDが残っているときは暗く＋プログレス枠表示）
   const cdRatio=shiftCD/15;
   ctx.fillStyle=shiftCD>0?'#444':(touch.S?'#fff':(player.phase===BLUE?'#4af':'#f44'));
