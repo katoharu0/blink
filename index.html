@@ -1227,6 +1227,9 @@ function drawClearScreen(){
     ctx.fillStyle='#888';
     ctx.fillText(`BEST  ${bs}:${bm}`,GW/2,GH/2+28);
   }
+  // 死亡回数（累計）
+  ctx.fillStyle=deathCount===0?'#0f8':'#fa0';
+  ctx.fillText(deathCount===0?`NO DEATH ★`:`DEATHS ${deathCount}`,GW/2,GH/2+42);
   ctx.textAlign='left';ctx.globalAlpha=1;
 }
 
@@ -1276,9 +1279,16 @@ function startGame(){
 function nextStage(){
   si++;
   if(si>=STAGES.length){
-    document.getElementById('ov-title').textContent='COMPLETE!';
-    document.getElementById('ov-sub').textContent=`全6ステージクリア！おめでとう！\n死亡回数: ${deathCount}回`;
-    document.getElementById('ov-ctrl').textContent='';
+    // ランク判定（死亡0→S、1-2→A、3-5→B、6+→C）
+    const rank=deathCount===0?'S':deathCount<=2?'A':deathCount<=5?'B':'C';
+    const rankColor=rank==='S'?'🌟':rank==='A'?'⭐':rank==='B'?'✨':'💫';
+    document.getElementById('ov-title').textContent='ALL CLEAR!!';
+    document.getElementById('ov-sub').textContent=
+      `全6ステージクリア！おめでとう！\n死亡回数: ${deathCount}回　ランク: ${rankColor} ${rank}`;
+    document.getElementById('ov-ctrl').textContent=
+      rank==='S'?'ノーデスクリア！伝説のプレイヤー！':
+      rank==='A'?'素晴らしいプレイ！':
+      rank==='B'?'なかなかやるじゃないか！':'まだまだ練習が必要？また挑戦しよう！';
     document.getElementById('ov-btn').textContent='もう一度';
     document.getElementById('ov-btn').onclick=startGame;
     document.getElementById('ov').classList.remove('hidden');
