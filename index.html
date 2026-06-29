@@ -102,6 +102,57 @@ function sfxGoal(){ [660,770,880,1100].forEach((f,i)=>setTimeout(()=>beep(f,.15,
 function sfxSpring(){ beep(440,0.04,'square',0.15); beep(660,0.08,'square',0.12); beep(880,0.1,'sine',0.1); }
 function sfxCheck(){ beep(550,0.06,'sine',0.18); beep(660,0.12,'sine',0.15); }
 
+// ---- BGM スケジューラ（チップチューン風ループ） ----
+let bgmNext=0, bgmStep=0, bgmOn=false;
+const BGM_SPB=60/138/2;  // 8分音符1つの秒数（138BPM）
+// BLUE フェーズ：明るめのアルペジオ
+const BGM_B=[261,330,392,523, 392,330,261,196];
+// RED フェーズ：緊張感のある音列
+const BGM_R=[349,440,523,440, 349,294,349,392];
+// ベースライン（2拍おき）
+const BGM_BASS_B=[65,65,82,82, 65,65,98,98];
+const BGM_BASS_R=[87,87,110,110,87,87,73,73];
+
+function bgmTick(){
+  if(!bgmOn) return;
+  const a=getAudio();
+  while(bgmNext<a.currentTime+0.25){
+    const idx=bgmStep%8;
+    const pat=player.phase===BLUE?BGM_B:BGM_R;
+    const bass=player.phase===BLUE?BGM_BASS_B:BGM_BASS_R;
+    const t=bgmNext;
+    // メロディ
+    try{
+      const o=a.createOscillator(), g=a.createGain();
+      o.connect(g); g.connect(a.destination);
+      o.type='square'; o.frequency.value=pat[idx];
+      g.gain.setValueAtTime(0.055,t);
+      g.gain.exponentialRampToValueAtTime(0.001,t+BGM_SPB*0.85);
+      o.start(t); o.stop(t+BGM_SPB*0.85);
+    }catch(e){}
+    // ベース（偶数ステップのみ）
+    if(idx%2===0){
+      try{
+        const o2=a.createOscillator(), g2=a.createGain();
+        o2.connect(g2); g2.connect(a.destination);
+        o2.type='triangle'; o2.frequency.value=bass[idx];
+        g2.gain.setValueAtTime(0.07,t);
+        g2.gain.exponentialRampToValueAtTime(0.001,t+BGM_SPB*1.8);
+        o2.start(t); o2.stop(t+BGM_SPB*1.8);
+      }catch(e){}
+    }
+    bgmStep++;
+    bgmNext+=BGM_SPB;
+  }
+}
+
+function startBGM(){
+  const a=getAudio();
+  bgmNext=a.currentTime+0.05;
+  bgmStep=0; bgmOn=true;
+}
+function stopBGM(){ bgmOn=false; }
+
 // ================================================================
 //  ステージデータ
 //  tiles配列: [tx, ty, tw, th, type]  (タイル単位)
@@ -306,6 +357,9 @@ let camShake=0;       // カメラシェイク残フレーム
 let deathCount=0;     // 死亡回数
 let stageIntroT=0;    // ステージ開始演出フレーム
 
+// 残像（フェーズシフト時に出る）
+let ghosts=[];
+
 // パーティクル
 let particles=[];
 function addParticle(x,y,color,n=8){
@@ -403,11 +457,17 @@ function update(){
   if(gameState!=='playing') return;
   fr++;
 
+  // 残像更新
+  ghosts=ghosts.filter(g=>{ g.life--; return g.life>0; });
+
   // パーティクル更新
   particles=particles.filter(p=>{
     p.x+=p.vx; p.y+=p.vy; p.vy+=0.1; p.life--;
     return p.life>0;
   });
+
+  // BGMスケジュール
+  bgmTick();
 
   if(player.dead){
     player.deadTimer++;
@@ -426,6 +486,12 @@ function update(){
   if(shiftCD>0) shiftCD--;
   const nowSH=isSH();
   if(nowSH&&!prevSH&&shiftCD===0){
+    // 残像を3枚スポーン（シフト前の色で）
+    for(let g=0;g<3;g++){
+      ghosts.push({x:player.x+g*1.5,y:player.y,w:player.w,h:player.h,
+        color:player.phase===BLUE?'#3388ff':'#ff3333',
+        life:18-g*5, maxLife:18});
+    }
     player.phase=1-player.phase;
     shiftCD=15;
     player.shiftFlash=10;
@@ -701,6 +767,14 @@ function draw(){
     ctx.globalAlpha=p.life/p.maxLife;
     ctx.fillStyle=p.color;
     ctx.fillRect(p.x-2,p.y-2,4,4);
+  }
+  ctx.globalAlpha=1;
+
+  // 残像（プレイヤーの後ろに描く）
+  for(const g of ghosts){
+    ctx.globalAlpha=(g.life/g.maxLife)*0.45;
+    ctx.fillStyle=g.color;
+    ctx.fillRect(g.x,g.y,g.w,g.h);
   }
   ctx.globalAlpha=1;
 
@@ -1014,6 +1088,8 @@ function startGame(){
   initPlayer(); cam.x=0; cam.y=0;
   gameState='playing';
   stageIntroT=90;
+  ghosts=[];
+  startBGM();
   document.getElementById('ov').classList.add('hidden');
 }
 
@@ -1026,6 +1102,7 @@ function nextStage(){
     document.getElementById('ov-btn').textContent='もう一度';
     document.getElementById('ov-btn').onclick=startGame;
     document.getElementById('ov').classList.remove('hidden');
+    stopBGM();
     gameState='title'; return;
   }
   resetStageState();
