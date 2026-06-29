@@ -1,0 +1,895 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,user-scalable=no">
+<title>BLINK</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#000;display:flex;justify-content:center;align-items:center;height:100dvh;overflow:hidden;font-family:'Courier New',monospace}
+canvas{display:block;image-rendering:pixelated;touch-action:none}
+#ov{position:fixed;inset:0;background:rgba(0,0,0,.88);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:20;color:#fff;gap:10px}
+#ov h1{font-size:clamp(28px,8vw,56px);letter-spacing:.2em;color:#4af}
+#ov .sub{font-size:clamp(10px,2.5vw,14px);color:#888;text-align:center;line-height:1.6}
+#ov .ctrl{font-size:clamp(9px,2vw,12px);color:#66aaff;background:rgba(0,100,255,.1);padding:8px 16px;border:1px solid #224;border-radius:4px;text-align:center;line-height:1.8}
+#ov button{margin-top:8px;padding:10px 36px;font-size:clamp(13px,3vw,18px);background:transparent;border:2px solid #4af;color:#4af;cursor:pointer;letter-spacing:.2em;border-radius:2px;transition:.2s}
+#ov button:hover{background:rgba(68,170,255,.15)}
+.hidden{display:none!important}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="ov">
+  <h1 id="ov-title">BLINK</h1>
+  <p class="sub" id="ov-sub">2つの次元を「瞬く」ように切り替えて進め<br>青と赤の世界それぞれに秘密のギミックがある</p>
+  <p class="ctrl" id="ov-ctrl">
+    ← → / A D : 移動 &nbsp;|&nbsp; Space / ↑ / W : ジャンプ &nbsp;|&nbsp; Q / Z : フェーズ切替<br>
+    壁に張り付いてジャンプ：壁ジャンプ<br>
+    スマホ：画面左下=移動 / 右下=SHIFT&JUMP
+  </p>
+  <button id="ov-btn">START</button>
+</div>
+<script>
+// ================================================================
+//  BLINK  — デュアルワールド横スクロールアクション
+//  ギミック: フェーズシフト・重力反転・ポータル・バネ・トゲ
+//            風ゾーン・リズムブロック・鍵&ドア・コンベア
+//            一方通行床・壁ジャンプ・サイズ変化
+// ================================================================
+
+const C = document.getElementById('c');
+const ctx = C.getContext('2d');
+
+const GW = 480, GH = 270;
+let scale = 1;
+function resize(){
+  scale = Math.min(innerWidth/GW, innerHeight/GH);
+  C.style.width  = GW*scale+'px';
+  C.style.height = GH*scale+'px';
+  C.width = GW; C.height = GH;
+}
+resize(); addEventListener('resize', resize);
+
+// ---- 定数 ----
+const T = 16;                 // タイルサイズ
+const GRAV  = 0.38;
+const JSPD  = -7.8;
+const MSPD  = 2.4;
+const WJSPD = { x:3.6, y:-6.8 };
+const BLUE=0, RED=1;
+
+// ---- タイル種類 ----
+const TL = {
+  SOLID:1, BLUE:2, RED:3,
+  SPIKE:4, SPRING:5,
+  PORTA:6, PORTB:7,
+  GRAV:8,
+  WINDR:9, WINDL:10, WINDU:11,
+  KEY:12, DOOR:13,
+  RHYTHM:14, GOAL:15,
+  ONEWAY:16, CONV_R:17, CONV_L:18,
+  SMALL:19,   // サイズ変化アイテム
+};
+
+// ================================================================
+//  ステージデータ
+//  tiles配列: [tx, ty, tw, th, type]  (タイル単位)
+// ================================================================
+const STAGES = [
+// ---------- STAGE 1: フェーズシフト入門 ----------
+{
+  name:'PHASE 1 — SHIFT', hint:'Q/Z で2つの次元を切り替えろ',
+  bgB:'#060d1a', bgR:'#1a0606', ww:30, wh:17,
+  start:[1.5*T,11*T], keys:0,
+  tiles:[
+    [0,14,30,3,TL.SOLID],          // 地面
+    [0,0,1,14,TL.SOLID],           // 左壁
+    [29,0,1,17,TL.SOLID],          // 右壁
+    // 青のみ足場
+    [4,12,3,1,TL.BLUE], [9,10,3,1,TL.BLUE], [14,8,3,1,TL.BLUE], [20,10,3,1,TL.BLUE],
+    // 赤のみ足場
+    [6,12,3,1,TL.RED],  [11,10,3,1,TL.RED],  [16,8,3,1,TL.RED],  [22,10,3,1,TL.RED],
+    // トゲ
+    [7,13,2,1,TL.SPIKE],[12,13,2,1,TL.SPIKE],[18,13,2,1,TL.SPIKE],
+    // ゴール
+    [26,13,2,2,TL.GOAL],
+  ]
+},
+// ---------- STAGE 2: 重力反転 ----------
+{
+  name:'PHASE 2 — GRAVITY', hint:'重力反転ゾーン（紫）では上下が逆になる',
+  bgB:'#060d14', bgR:'#14060d', ww:28, wh:17,
+  start:[1.5*T,12*T], keys:0,
+  tiles:[
+    [0,14,28,2,TL.SOLID],[0,0,28,2,TL.SOLID],
+    [0,2,1,12,TL.SOLID],[27,2,1,12,TL.SOLID],
+    // 重力反転ゾーン×2
+    [5,2,4,12,TL.GRAV],[16,2,4,12,TL.GRAV],
+    // 足場（共通）
+    [2,10,3,1,TL.SOLID],[10,6,3,1,TL.SOLID],[22,10,3,1,TL.SOLID],
+    // 青のみ
+    [3,7,2,1,TL.BLUE],[8,4,2,1,TL.BLUE],[11,10,2,1,TL.BLUE],[20,5,2,1,TL.BLUE],
+    // 赤のみ
+    [3,12,2,1,TL.RED],[9,11,2,1,TL.RED],[12,5,2,1,TL.RED],[21,11,2,1,TL.RED],
+    // トゲ
+    [11,13,3,1,TL.SPIKE],
+    // ゴール
+    [24,13,2,2,TL.GOAL],
+  ]
+},
+// ---------- STAGE 3: ポータル + 風 ----------
+{
+  name:'PHASE 3 — PORTAL', hint:'シアン=A・マゼンタ=B ポータルで瞬間移動。風に乗れ',
+  bgB:'#060a1a', bgR:'#1a060a', ww:35, wh:17,
+  start:[1.5*T,12*T], keys:0,
+  tiles:[
+    [0,14,35,2,TL.SOLID],[0,0,1,14,TL.SOLID],[34,0,1,17,TL.SOLID],
+    // 足場
+    [3,11,3,1,TL.SOLID],[9,9,3,1,TL.SOLID],[16,11,3,1,TL.SOLID],
+    [22,8,3,1,TL.SOLID],[29,10,3,1,TL.SOLID],
+    // 一方通行
+    [6,12,2,1,TL.ONEWAY],[12,10,2,1,TL.ONEWAY],[19,10,2,1,TL.ONEWAY],
+    // バネ
+    [10,8,1,1,TL.SPRING],
+    // 風ゾーン（上向き）
+    [12,10,3,4,TL.WINDU],[25,9,3,5,TL.WINDU],
+    // 横風
+    [19,8,3,2,TL.WINDR],
+    // ポータルA→B
+    [16,10,1,1,TL.PORTA],[30,13,1,1,TL.PORTB],
+    // 青
+    [4,9,2,1,TL.BLUE],[21,10,2,1,TL.BLUE],
+    // 赤
+    [5,7,2,1,TL.RED],[22,6,2,1,TL.RED],
+    // トゲ
+    [7,13,3,1,TL.SPIKE],[17,13,3,1,TL.SPIKE],
+    // ゴール
+    [31,13,2,2,TL.GOAL],
+  ]
+},
+// ---------- STAGE 4: リズム + コンベア + 一方通行 ----------
+{
+  name:'PHASE 4 — RHYTHM', hint:'点滅するオレンジブロック（リズム）に注意。コンベアは滑る',
+  bgB:'#04100a', bgR:'#100a04', ww:32, wh:17,
+  start:[1.5*T,12*T], keys:0,
+  tiles:[
+    [0,14,32,2,TL.SOLID],[0,0,1,14,TL.SOLID],[31,0,1,17,TL.SOLID],
+    // 一方通行足場
+    [3,12,3,1,TL.ONEWAY],[8,10,3,1,TL.ONEWAY],
+    [13,12,3,1,TL.ONEWAY],[18,10,3,1,TL.ONEWAY],[23,12,3,1,TL.ONEWAY],
+    // リズムブロック（ONのとき乗れる）
+    [6,13,2,1,TL.RHYTHM],[11,13,2,1,TL.RHYTHM],
+    [16,13,2,1,TL.RHYTHM],[21,13,2,1,TL.RHYTHM],
+    // コンベア
+    [8,9,5,1,TL.CONV_R],[18,9,5,1,TL.CONV_L],
+    // 青
+    [4,10,2,1,TL.BLUE],[14,8,2,1,TL.BLUE],[24,8,2,1,TL.BLUE],
+    // 赤
+    [5,8,2,1,TL.RED],[15,6,2,1,TL.RED],[25,6,2,1,TL.RED],
+    // バネ
+    [27,13,1,1,TL.SPRING],
+    // トゲ
+    [9,13,2,1,TL.SPIKE],
+    // ゴール
+    [28,13,2,2,TL.GOAL],
+  ]
+},
+// ---------- STAGE 5: 鍵&ドア + サイズ変化 ----------
+{
+  name:'PHASE 5 — KEY', hint:'鍵を3つ集めてドアを開けろ。SMALLで小さくなれ',
+  bgB:'#080014', bgR:'#140008', ww:40, wh:17,
+  start:[1.5*T,12*T], keys:3,
+  tiles:[
+    [0,14,40,2,TL.SOLID],[0,0,1,14,TL.SOLID],[39,0,1,17,TL.SOLID],
+    // 足場
+    [3,11,3,1,TL.SOLID],[8,9,3,1,TL.SOLID],[13,11,3,1,TL.SOLID],
+    [19,9,3,1,TL.SOLID],[24,11,3,1,TL.SOLID],[30,9,3,1,TL.SOLID],
+    [35,11,3,1,TL.SOLID],
+    // 鍵×3
+    [4,10,1,1,TL.KEY],[14,10,1,1,TL.KEY],[25,10,1,1,TL.KEY],
+    // ドア
+    [35,13,2,2,TL.DOOR],
+    // サイズ変化アイテム
+    [9,8,1,1,TL.SMALL],[20,8,1,1,TL.SMALL],
+    // 青
+    [5,9,2,1,TL.BLUE],[15,9,2,1,TL.BLUE],[26,9,2,1,TL.BLUE],
+    // 赤
+    [6,7,2,1,TL.RED],[16,7,2,1,TL.RED],[27,7,2,1,TL.RED],
+    // コンベア
+    [30,8,3,1,TL.CONV_R],
+    // 風（縦）
+    [22,9,3,5,TL.WINDU],
+    // トゲ
+    [10,13,3,1,TL.SPIKE],[21,13,3,1,TL.SPIKE],
+    // ゴール（ドアの先）
+    [37,13,2,2,TL.GOAL],
+  ]
+},
+// ---------- STAGE 6: 全部盛り FINAL ----------
+{
+  name:'PHASE 6 — FINAL', hint:'全ギミック総動員！集中して！',
+  bgB:'#040410', bgR:'#100404', ww:48, wh:17,
+  start:[1.5*T,12*T], keys:1,
+  tiles:[
+    [0,14,48,2,TL.SOLID],[0,0,1,14,TL.SOLID],[47,0,1,17,TL.SOLID],
+    // 序盤フェーズシフト地帯
+    [3,12,2,1,TL.BLUE],[5,12,2,1,TL.RED],[7,12,2,1,TL.BLUE],[9,12,2,1,TL.RED],
+    [3,10,2,1,TL.RED],[6,10,2,1,TL.BLUE],[9,10,2,1,TL.RED],
+    // 重力反転ゾーン
+    [11,2,4,12,TL.GRAV],
+    [12,7,2,1,TL.BLUE],[12,5,2,1,TL.RED],
+    [12,10,2,1,TL.SOLID],
+    // ポータル
+    [16,13,1,1,TL.PORTA],[26,13,1,1,TL.PORTB],
+    // 風+バネ
+    [18,9,3,5,TL.WINDU],[18,13,1,1,TL.SPRING],
+    // リズム
+    [22,12,2,1,TL.RHYTHM],[25,12,2,1,TL.RHYTHM],
+    // 足場ブリッジ
+    [20,10,3,1,TL.SOLID],[27,10,3,1,TL.SOLID],
+    // コンベア
+    [28,9,5,1,TL.CONV_R],
+    // 鍵
+    [30,8,1,1,TL.KEY],
+    // ドア
+    [33,13,2,2,TL.DOOR],
+    // 仕掛け後半
+    [35,11,3,1,TL.BLUE],[38,9,3,1,TL.RED],
+    [35,8,2,1,TL.ONEWAY],[40,11,2,1,TL.ONEWAY],
+    [42,9,3,1,TL.SOLID],
+    // トゲ
+    [13,13,2,1,TL.SPIKE],[24,13,2,1,TL.SPIKE],[36,13,3,1,TL.SPIKE],
+    // バネ（後半）
+    [42,8,1,1,TL.SPRING],
+    // ゴール
+    [44,13,2,2,TL.GOAL],
+  ]
+},
+];
+
+// ================================================================
+//  ゲーム状態
+// ================================================================
+let gameState='title', si=0, fr=0;
+let player={};
+let cam={x:0,y:0};
+let colKeys=0;
+let colKeySet=new Set();
+let colSmallSet=new Set();
+
+// パーティクル
+let particles=[];
+function addParticle(x,y,color,n=8){
+  for(let i=0;i<n;i++){
+    const a=Math.random()*Math.PI*2, s=1+Math.random()*3;
+    particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:30+Math.random()*20,maxLife:50,color});
+  }
+}
+
+// ================================================================
+//  入力
+// ================================================================
+const K={};
+addEventListener('keydown',e=>{K[e.code]=true; if(['Space','ArrowUp','ArrowDown'].includes(e.code))e.preventDefault();});
+addEventListener('keyup',e=>{K[e.code]=false;});
+
+const touch={L:false,R:false,J:false,S:false};
+function touchZone(cx,cy){
+  const gx=cx/scale, gy=cy/scale;
+  if(gy<GH*0.55) return null;
+  if(gx<GW*0.18) return 'L';
+  if(gx<GW*0.36) return 'R';
+  if(gx>GW*0.60&&gx<GW*0.78) return 'S';
+  if(gx>GW*0.78) return 'J';
+  return null;
+}
+function applyTouches(e){
+  touch.L=touch.R=touch.J=touch.S=false;
+  for(const t of e.touches){
+    const z=touchZone(t.clientX,t.clientY);
+    if(z) touch[z]=true;
+  }
+}
+C.addEventListener('touchstart',e=>{e.preventDefault();applyTouches(e);},{passive:false});
+C.addEventListener('touchmove',e=>{e.preventDefault();applyTouches(e);},{passive:false});
+C.addEventListener('touchend',e=>{e.preventDefault();applyTouches(e);},{passive:false});
+
+const isL=()=>K.ArrowLeft||K.KeyA||touch.L;
+const isR=()=>K.ArrowRight||K.KeyD||touch.R;
+const isJ=()=>K.Space||K.ArrowUp||K.KeyW||touch.J;
+const isSH=()=>K.KeyQ||K.KeyZ||touch.S;
+
+// ================================================================
+//  プレイヤー初期化
+// ================================================================
+function initPlayer(){
+  const s=STAGES[si];
+  player={
+    x:s.start[0], y:s.start[1],
+    w:12, h:14,
+    vx:0, vy:0,
+    onGround:false, onWall:0,
+    phase:BLUE,
+    gravDir:1,
+    dead:false, deadTimer:0,
+    invincible:0,
+    facingR:true,
+    shiftCD:0, shiftFlash:0,
+    portalCD:0,
+    animF:0, animT:0,
+    small:false, smallTimer:0,
+    prevJ:false, prevSH:false,
+  };
+}
+
+// ================================================================
+//  ヘルパー
+// ================================================================
+function stg(){ return STAGES[si]; }
+function tileActive(type){
+  if(type===TL.BLUE) return player.phase===BLUE;
+  if(type===TL.RED)  return player.phase===RED;
+  return true;
+}
+function isSolid(type){
+  return type===TL.SOLID||type===TL.BLUE||type===TL.RED||
+         type===TL.RHYTHM||type===TL.CONV_R||type===TL.CONV_L||type===TL.ONEWAY;
+}
+function rhythmOn(){ return (fr%90)<52; }
+
+// タイルIDキー（ステージ跨ぎ対策）
+function tileId(tile){ return tile[0]*1000+tile[1]; }
+
+// ================================================================
+//  更新
+// ================================================================
+let prevJ=false, prevSH=false, shiftCD=0;
+
+function update(){
+  if(gameState!=='playing') return;
+  fr++;
+
+  // パーティクル更新
+  particles=particles.filter(p=>{
+    p.x+=p.vx; p.y+=p.vy; p.vy+=0.1; p.life--;
+    return p.life>0;
+  });
+
+  if(player.dead){
+    player.deadTimer++;
+    if(player.deadTimer>75) respawn();
+    return;
+  }
+  if(player.invincible>0) player.invincible--;
+  if(player.portalCD>0) player.portalCD--;
+  if(player.smallTimer>0){ player.smallTimer--; }
+  else { player.small=false; }
+
+  const s=stg();
+  const ph=player.w, pv=player.h;
+
+  // フェーズ切替
+  if(shiftCD>0) shiftCD--;
+  const nowSH=isSH();
+  if(nowSH&&!prevSH&&shiftCD===0){
+    player.phase=1-player.phase;
+    shiftCD=15;
+    player.shiftFlash=10;
+    addParticle(player.x+player.w/2, player.y+player.h/2,
+      player.phase===BLUE?'#4af':'#f44',12);
+  }
+  prevSH=nowSH;
+  if(player.shiftFlash>0) player.shiftFlash--;
+
+  // プレイヤーの実サイズ
+  const pw=player.small?8:12, pvh=player.small?10:14;
+  player.w=pw; player.h=pvh;
+
+  // 重力反転ゾーン判定（中心で判定）
+  const cx=player.x+pw/2, cy=player.y+pvh/2;
+  let inGrav=false;
+  for(const tile of s.tiles){
+    if(tile[4]!==TL.GRAV) continue;
+    const tx=tile[0]*T,ty=tile[1]*T,tw=tile[2]*T,th=tile[3]*T;
+    if(cx>tx&&cx<tx+tw&&cy>ty&&cy<ty+th){inGrav=true;break;}
+  }
+  player.gravDir=inGrav?-1:1;
+
+  // 水平移動
+  let ax=0;
+  if(isL()){ ax=-1; player.facingR=false; }
+  if(isR()){ ax=1;  player.facingR=true;  }
+  player.vx = ax!==0 ? ax*MSPD : player.vx*0.65;
+
+  // 風・コンベア
+  for(const tile of s.tiles){
+    const type=tile[4];
+    if(type!==TL.WINDR&&type!==TL.WINDL&&type!==TL.WINDU&&
+       type!==TL.CONV_R&&type!==TL.CONV_L) continue;
+    const tx=tile[0]*T,ty=tile[1]*T,tw=tile[2]*T,th=tile[3]*T;
+    const inTile=cx>tx&&cx<tx+tw&&cy>ty&&cy<ty+th;
+    const onConv=player.x+pw>tx&&player.x<tx+tw&&
+                 Math.abs(player.y+pvh-(ty))<4&&player.vy>=0;
+    if(type===TL.WINDR&&inTile) player.vx+=0.35;
+    if(type===TL.WINDL&&inTile) player.vx-=0.35;
+    if(type===TL.WINDU&&inTile) player.vy-=0.55;
+    if(type===TL.CONV_R&&onConv) player.vx+=1.2;
+    if(type===TL.CONV_L&&onConv) player.vx-=1.2;
+  }
+
+  // 速度制限
+  player.vx=Math.max(-6,Math.min(6,player.vx));
+
+  // 重力
+  player.vy+=GRAV*player.gravDir;
+  player.vy=Math.max(-10,Math.min(10,player.vy));
+
+  // ジャンプ
+  const nowJ=isJ();
+  if(nowJ&&!prevJ){
+    if(player.onGround){
+      player.vy=JSPD*player.gravDir;
+      player.onGround=false;
+    } else if(player.onWall!==0){
+      player.vy=WJSPD.y*player.gravDir;
+      player.vx=-player.onWall*WJSPD.x;
+      player.onWall=0;
+    }
+  }
+  prevJ=nowJ;
+
+  // X移動 → 衝突
+  player.x+=player.vx;
+  player.onWall=0;
+  solveX(s,pw,pvh);
+
+  // Y移動 → 衝突
+  player.y+=player.vy;
+  player.onGround=false;
+  solveY(s,pw,pvh);
+
+  // 各種ギミック判定
+  checkGimmicks(s,pw,pvh);
+
+  // 画面外
+  if(player.y>s.wh*T+40) killPlayer();
+
+  // アニメ
+  if(Math.abs(player.vx)>0.5&&player.onGround){
+    player.animT++;
+    if(player.animT>6){ player.animT=0; player.animF=(player.animF+1)%4; }
+  } else player.animF=0;
+
+  // カメラ
+  const tx2=player.x+pw/2-GW/2, ty2=player.y+pvh/2-GH/2;
+  cam.x+=(tx2-cam.x)*0.12; cam.y+=(ty2-cam.y)*0.12;
+  cam.x=Math.max(0,Math.min(s.ww*T-GW,cam.x));
+  cam.y=Math.max(0,Math.min(s.wh*T-GH,cam.y));
+}
+
+function solveX(s,pw,pvh){
+  for(const tile of s.tiles){
+    const type=tile[4];
+    if(!isSolid(type)||!tileActive(type)) continue;
+    if(type===TL.DOOR&&colKeys<s.keys) continue;
+    if(type===TL.RHYTHM&&!rhythmOn()) continue;
+    if(type===TL.ONEWAY) continue;
+    const tx=tile[0]*T,ty=tile[1]*T,tw=tile[2]*T,th=tile[3]*T;
+    if(player.x<tx+tw&&player.x+pw>tx&&player.y+2<ty+th&&player.y+pvh-2>ty){
+      if(player.vx>0){ player.x=tx-pw; player.onWall=1; }
+      else           { player.x=tx+tw; player.onWall=-1;}
+      player.vx=0;
+    }
+  }
+}
+
+function solveY(s,pw,pvh){
+  for(const tile of s.tiles){
+    const type=tile[4];
+    if(!isSolid(type)||!tileActive(type)) continue;
+    if(type===TL.DOOR&&colKeys<s.keys) continue;
+    if(type===TL.RHYTHM&&!rhythmOn()) continue;
+    const tx=tile[0]*T,ty=tile[1]*T,tw=tile[2]*T,th=tile[3]*T;
+
+    // 一方通行: 上から降りてきたときのみ
+    if(type===TL.ONEWAY){
+      if(player.vy*player.gravDir>0&&
+         player.x+pw-2>tx&&player.x+2<tx+tw&&
+         player.y+pvh-player.vy<=ty+2){
+        player.y=ty-pvh; player.vy=0; player.onGround=true;
+      }
+      continue;
+    }
+    if(player.x+2<tx+tw&&player.x+pw-2>tx&&player.y<ty+th&&player.y+pvh>ty){
+      if(player.vy*player.gravDir>0){
+        player.y=player.gravDir>0? ty-pvh : ty+th;
+        player.vy=0; player.onGround=true;
+      } else {
+        player.y=player.gravDir>0? ty+th : ty-pvh;
+        player.vy=0;
+      }
+    }
+  }
+}
+
+function checkGimmicks(s,pw,pvh){
+  const cx=player.x+pw/2, cy=player.y+pvh/2;
+  for(let i=0;i<s.tiles.length;i++){
+    const tile=s.tiles[i];
+    const type=tile[4];
+    const tx=tile[0]*T,ty=tile[1]*T,tw=tile[2]*T,th=tile[3]*T;
+    const hit=player.x+pw>tx+2&&player.x<tx+tw-2&&player.y+pvh>ty+2&&player.y<ty+th-2;
+    const softHit=player.x+pw>tx&&player.x<tx+tw&&player.y+pvh>ty&&player.y<ty+th;
+
+    if(type===TL.SPIKE&&hit){ killPlayer(); return; }
+
+    if(type===TL.SPRING&&player.x+pw>tx&&player.x<tx+tw&&
+       player.y+pvh>=ty&&player.y+pvh<=ty+th+6&&player.vy*player.gravDir>0){
+      player.vy=JSPD*2.5*player.gravDir;
+      player.onGround=false;
+      addParticle(tx+tw/2,ty,'#4f8',8);
+    }
+
+    if((type===TL.PORTA||type===TL.PORTB)&&softHit&&player.portalCD===0){
+      const target=type===TL.PORTA?TL.PORTB:TL.PORTA;
+      for(const t2 of s.tiles){
+        if(t2[4]!==target) continue;
+        player.x=t2[0]*T+(t2[2]*T-pw)/2;
+        player.y=t2[1]*T+(t2[3]*T-pvh)/2;
+        player.portalCD=40;
+        addParticle(player.x+pw/2,player.y+pvh/2,'#f0f',12);
+        break;
+      }
+    }
+
+    if(type===TL.KEY&&!colKeySet.has(i)&&hit){
+      colKeySet.add(i); colKeys++;
+      addParticle(tx+tw/2,ty+th/2,'#fc0',10);
+    }
+
+    if(type===TL.SMALL&&!colSmallSet.has(i)&&hit){
+      colSmallSet.add(i);
+      player.small=true; player.smallTimer=300;
+      addParticle(tx+tw/2,ty+th/2,'#f8f',8);
+    }
+
+    if(type===TL.GOAL&&hit){ clearStage(); return; }
+  }
+}
+
+function killPlayer(){
+  if(player.invincible>0) return;
+  addParticle(player.x+player.w/2,player.y+player.h/2,
+    player.phase===BLUE?'#4af':'#f44',16);
+  player.dead=true; player.deadTimer=0;
+}
+
+function respawn(){
+  initPlayer();
+  colKeys=0; colKeySet.clear(); colSmallSet.clear();
+}
+
+function clearStage(){
+  gameState='clear'; fr=0;
+}
+
+// ================================================================
+//  描画
+// ================================================================
+function draw(){
+  const s=stg();
+  ctx.fillStyle=player.phase===BLUE?s.bgB:s.bgR;
+  ctx.fillRect(0,0,GW,GH);
+
+  // グリッド
+  ctx.strokeStyle=player.phase===BLUE?'rgba(0,80,200,.06)':'rgba(200,40,40,.06)';
+  ctx.lineWidth=1;
+  for(let x=(-cam.x%T+T)%T;x<GW;x+=T){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,GH);ctx.stroke();}
+  for(let y=(-cam.y%T+T)%T;y<GH;y+=T){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(GW,y);ctx.stroke();}
+
+  ctx.save();
+  ctx.translate(-cam.x,-cam.y);
+
+  // タイル
+  for(let i=0;i<s.tiles.length;i++) drawTile(s.tiles[i],i);
+
+  // パーティクル
+  for(const p of particles){
+    ctx.globalAlpha=p.life/p.maxLife;
+    ctx.fillStyle=p.color;
+    ctx.fillRect(p.x-2,p.y-2,4,4);
+  }
+  ctx.globalAlpha=1;
+
+  drawPlayer();
+  ctx.restore();
+
+  drawHUD(s);
+  drawTouchButtons();
+
+  // フェーズフラッシュ
+  if(player.shiftFlash>0){
+    ctx.fillStyle=(player.phase===BLUE?'rgba(40,120,255,':'rgba(255,50,50,')+player.shiftFlash/10*0.28+')';
+    ctx.fillRect(0,0,GW,GH);
+  }
+
+  if(gameState==='clear') drawClearScreen();
+}
+
+function drawTile(tile,idx){
+  const [tx,ty,tw,th,type]=tile;
+  const rx=tx*T,ry=ty*T,rw=tw*T,rh=th*T;
+  switch(type){
+    case TL.SOLID:
+      ctx.fillStyle='#445566';ctx.fillRect(rx,ry,rw,rh);
+      ctx.fillStyle='#667788';ctx.fillRect(rx,ry,rw,2);
+      ctx.fillStyle='#334455';ctx.fillRect(rx,ry+rh-2,rw,2);
+      break;
+    case TL.BLUE:
+      if(player.phase===BLUE){
+        ctx.fillStyle='#1a60ff';ctx.fillRect(rx,ry,rw,rh);
+        ctx.fillStyle='#66aaff';ctx.fillRect(rx,ry,rw,2);
+      } else {
+        ctx.strokeStyle='rgba(30,100,255,.2)';ctx.lineWidth=1;
+        ctx.strokeRect(rx+.5,ry+.5,rw-1,rh-1);
+      }
+      break;
+    case TL.RED:
+      if(player.phase===RED){
+        ctx.fillStyle='#ff2020';ctx.fillRect(rx,ry,rw,rh);
+        ctx.fillStyle='#ff7777';ctx.fillRect(rx,ry,rw,2);
+      } else {
+        ctx.strokeStyle='rgba(255,40,40,.2)';ctx.lineWidth=1;
+        ctx.strokeRect(rx+.5,ry+.5,rw-1,rh-1);
+      }
+      break;
+    case TL.SPIKE:
+      ctx.fillStyle='#778899';
+      for(let i=0;i<rw/T;i++){
+        ctx.beginPath();
+        ctx.moveTo(rx+i*T,ry+rh);ctx.lineTo(rx+i*T+T/2,ry);ctx.lineTo(rx+i*T+T,ry+rh);
+        ctx.fill();
+      }
+      break;
+    case TL.SPRING:
+      ctx.fillStyle='#22cc66';ctx.fillRect(rx,ry+rh-4,rw,4);
+      ctx.fillStyle='#55ee99';ctx.fillRect(rx+3,ry+2,rw-6,rh-6);
+      ctx.fillStyle='#88ffbb';ctx.fillRect(rx+3,ry+2,rw-6,3);
+      break;
+    case TL.PORTA:
+      drawPortal(rx,ry,rw,rh,'#00ffff','#0088ff');break;
+    case TL.PORTB:
+      drawPortal(rx,ry,rw,rh,'#ff00ff','#8800ff');break;
+    case TL.GRAV:{
+      const a=.18+Math.sin(fr*.07)*.06;
+      ctx.fillStyle=`rgba(140,0,220,${a})`;ctx.fillRect(rx,ry,rw,rh);
+      ctx.fillStyle='rgba(180,80,255,.45)';
+      const off=(fr*0.6)%T;
+      for(let ay=ry;ay<ry+rh+T;ay+=T){
+        ctx.fillRect(rx+rw/2-1,ay-off,2,7);
+      }
+      ctx.strokeStyle='rgba(180,80,255,.3)';ctx.lineWidth=1;
+      ctx.strokeRect(rx+.5,ry+.5,rw-1,rh-1);
+      break;}
+    case TL.WINDU:case TL.WINDR:case TL.WINDL:{
+      const wc=type===TL.WINDU?'rgba(150,255,180,':'rgba(150,180,255,';
+      ctx.fillStyle=wc+'.08)';ctx.fillRect(rx,ry,rw,rh);
+      ctx.fillStyle=wc+'.5)';
+      for(let k=0;k<3;k++){
+        const t=(fr*.04+k/3)%1;
+        const wx=rx+(type===TL.WINDR?t*rw:(type===TL.WINDL?(1-t)*rw:rw/2));
+        const wy=ry+(type===TL.WINDU?(1-t)*rh:rh/2);
+        ctx.fillRect(wx-1.5,wy-1.5,3,3);
+      }
+      break;}
+    case TL.KEY:
+      if(!colKeySet.has(idx)){
+        const bob=Math.sin(fr*.12)*2;
+        drawKey(rx+rw/2,ry+rh/2+bob);
+      }
+      break;
+    case TL.DOOR:{
+      const open=colKeys>=stg().keys;
+      ctx.fillStyle=open?'rgba(100,60,0,.3)':'#774400';
+      ctx.fillRect(rx,ry,rw,rh);
+      ctx.strokeStyle=open?'rgba(255,200,0,.4)':'#ffcc00';
+      ctx.lineWidth=2;ctx.strokeRect(rx+1,ry+1,rw-2,rh-2);
+      if(!open){
+        ctx.fillStyle='#ffcc00';ctx.fillRect(rx+rw/2-3,ry+rh/2-3,6,6);
+        ctx.fillStyle='#000';ctx.fillRect(rx+rw/2-1,ry+rh/2-1,2,2);
+      }
+      break;}
+    case TL.RHYTHM:{
+      const on=rhythmOn();
+      if(on){ ctx.fillStyle='#ff8800';ctx.fillRect(rx,ry,rw,rh);ctx.fillStyle='#ffaa44';ctx.fillRect(rx,ry,rw,2);}
+      else  { ctx.strokeStyle='rgba(255,130,0,.3)';ctx.lineWidth=1;ctx.strokeRect(rx+.5,ry+.5,rw-1,rh-1);}
+      break;}
+    case TL.GOAL:{
+      const pulse=.65+Math.sin(fr*.12)*.35;
+      ctx.fillStyle=`rgba(255,220,0,${pulse})`;ctx.fillRect(rx,ry,rw,rh);
+      ctx.fillStyle='#fff';ctx.fillRect(rx+rw/2-1,ry,2,rh);
+      ctx.fillStyle='#ff4';
+      ctx.beginPath();ctx.moveTo(rx+rw/2+1,ry+2);ctx.lineTo(rx+rw-2,ry+5);ctx.lineTo(rx+rw/2+1,ry+9);ctx.fill();
+      break;}
+    case TL.ONEWAY:
+      ctx.fillStyle='#33aa55';ctx.fillRect(rx,ry,rw,3);
+      ctx.fillStyle='rgba(50,170,80,.25)';ctx.fillRect(rx,ry+3,rw,rh-3);
+      break;
+    case TL.CONV_R:case TL.CONV_L:{
+      ctx.fillStyle='#333';ctx.fillRect(rx,ry,rw,rh);
+      ctx.fillStyle='#666';ctx.fillRect(rx,ry,rw,2);
+      const dir=type===TL.CONV_R?1:-1;
+      const off2=((fr*dir*.4)%T+T)%T;
+      ctx.fillStyle='#999';
+      for(let ax2=rx-T+off2;ax2<rx+rw+T;ax2+=T*1.5){
+        if(ax2>=rx&&ax2<rx+rw) ctx.fillRect(ax2,ry+3,2,rh-6);
+      }
+      break;}
+    case TL.SMALL:
+      if(!colSmallSet.has(idx)){
+        const bob2=Math.sin(fr*.15)*2;
+        ctx.fillStyle='#ff88ff';ctx.fillRect(rx+2,ry+2+bob2,rw-4,rh-4);
+        ctx.fillStyle='#ffccff';
+        ctx.font='7px monospace';ctx.textAlign='center';
+        ctx.fillText('S',rx+rw/2,ry+rh/2+3+bob2);
+        ctx.textAlign='left';
+      }
+      break;
+  }
+}
+
+function drawPortal(rx,ry,rw,rh,c1,c2){
+  const cx2=rx+rw/2,cy2=ry+rh/2,r=Math.min(rw,rh)/2;
+  const g=ctx.createRadialGradient(cx2,cy2,0,cx2,cy2,r);
+  g.addColorStop(0,c1+'cc');g.addColorStop(1,c2+'00');
+  ctx.fillStyle=g;
+  ctx.beginPath();ctx.arc(cx2,cy2,r+Math.sin(fr*.15)*1.5,0,Math.PI*2);ctx.fill();
+  ctx.strokeStyle=c1+'cc';ctx.lineWidth=1.5;
+  ctx.beginPath();ctx.arc(cx2,cy2,r*.75,fr*.05,fr*.05+Math.PI*1.6);ctx.stroke();
+}
+
+function drawKey(cx,cy){
+  ctx.fillStyle='#ffcc00';
+  ctx.beginPath();ctx.arc(cx,cy-3,4.5,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#ffcc00';ctx.fillRect(cx-1,cy-1,2,8);
+  ctx.fillRect(cx+1,cy+4,4,2);ctx.fillRect(cx+1,cy+2,4,2);
+  ctx.strokeStyle='#ff8800';ctx.lineWidth=1;
+  ctx.beginPath();ctx.arc(cx,cy-3,4.5,0,Math.PI*2);ctx.stroke();
+}
+
+function drawPlayer(){
+  if(player.dead){
+    ctx.globalAlpha=Math.max(0,1-player.deadTimer/60);
+    ctx.fillStyle=player.phase===BLUE?'#4af':'#f44';
+    ctx.beginPath();
+    ctx.arc(player.x+player.w/2,player.y+player.h/2,
+            player.w*(1+player.deadTimer/40),0,Math.PI*2);
+    ctx.fill();
+    ctx.globalAlpha=1;
+    return;
+  }
+  const px=player.x,py=player.y,pw=player.w,pvh=player.h;
+  if(player.invincible>0&&Math.floor(player.invincible/4)%2) ctx.globalAlpha=.3;
+  ctx.save();
+  ctx.translate(px+pw/2,py+pvh/2);
+  if(player.gravDir<0) ctx.scale(1,-1);
+  if(!player.facingR) ctx.scale(-1,1);
+  ctx.translate(-pw/2,-pvh/2);
+
+  const body=player.phase===BLUE?'#3388ff':'#ff3333';
+  const hi=player.phase===BLUE?'#88ccff':'#ff8888';
+  ctx.fillStyle=body;ctx.fillRect(1,3,pw-2,pvh-3);
+  ctx.fillStyle=hi;ctx.fillRect(1,3,pw-2,3);
+  ctx.fillStyle='#fff';ctx.fillRect(pw-6,5,4,4);
+  ctx.fillStyle='#111';ctx.fillRect(pw-5,6,2,2);
+  // 足
+  const leg=[0,2,0,-2][player.animF]||0;
+  ctx.fillStyle=body;
+  ctx.fillRect(1,pvh-4+leg,4,4);
+  ctx.fillRect(pw-5,pvh-4-leg,4,4);
+
+  ctx.restore();
+  ctx.globalAlpha=1;
+}
+
+function drawHUD(s){
+  ctx.fillStyle='rgba(0,0,0,.55)';ctx.fillRect(2,2,170,16);
+  ctx.fillStyle='#ccc';ctx.font='8px monospace';ctx.fillText(s.name,6,13);
+  const pc=player.phase===BLUE?'#4af':'#f44';
+  ctx.fillStyle=pc;ctx.fillRect(GW-40,2,38,16);
+  ctx.fillStyle='#fff';ctx.fillText(player.phase===BLUE?'BLUE':' RED',GW-36,13);
+  if(s.keys>0){
+    ctx.fillStyle='rgba(0,0,0,.5)';ctx.fillRect(2,20,72,14);
+    ctx.fillStyle='#fc0';ctx.fillText(`KEY ${colKeys}/${s.keys}`,6,30);
+  }
+  if(player.small){
+    ctx.fillStyle='rgba(0,0,0,.5)';ctx.fillRect(2,36,70,14);
+    ctx.fillStyle='#f8f';ctx.fillText(`SMALL ${Math.ceil(player.smallTimer/60)}s`,6,46);
+  }
+  ctx.fillStyle='rgba(255,255,255,.28)';ctx.font='7px monospace';
+  ctx.fillText(s.hint,4,GH-4);
+  ctx.fillStyle='rgba(0,0,0,.4)';ctx.fillRect(GW-36,GH-14,34,12);
+  ctx.fillStyle='#888';ctx.fillText(`${si+1}/${STAGES.length}`,GW-33,GH-5);
+}
+
+function drawTouchButtons(){
+  const y=GH-44,sz=36;
+  const alpha=.22;
+  ctx.globalAlpha=alpha;
+  // 左
+  ctx.fillStyle=touch.L?'#fff':'#aaa';rr(4,y,sz,sz,6);ctx.fill();
+  ctx.fillStyle='#333';ctx.font='16px monospace';ctx.fillText('◄',10,y+24);
+  // 右
+  ctx.fillStyle=touch.R?'#fff':'#aaa';rr(44,y,sz,sz,6);ctx.fill();
+  ctx.fillStyle='#333';ctx.fillText('►',50,y+24);
+  // SHIFT
+  ctx.fillStyle=touch.S?'#fff':(player.phase===BLUE?'#4af':'#f44');
+  rr(GW-88,y,sz+10,sz,6);ctx.fill();
+  ctx.fillStyle='#fff';ctx.font='8px monospace';ctx.fillText('SHIFT',GW-83,y+22);
+  // JUMP
+  ctx.fillStyle=touch.J?'#fff':'#aaa';rr(GW-44,y,sz,sz,6);ctx.fill();
+  ctx.fillStyle='#333';ctx.font='16px monospace';ctx.fillText('▲',GW-38,y+24);
+  ctx.globalAlpha=1;
+}
+
+function rr(x,y,w,h,r){
+  ctx.beginPath();ctx.moveTo(x+r,y);ctx.lineTo(x+w-r,y);
+  ctx.arcTo(x+w,y,x+w,y+r,r);ctx.lineTo(x+w,y+h-r);
+  ctx.arcTo(x+w,y+h,x+w-r,y+h,r);ctx.lineTo(x+r,y+h);
+  ctx.arcTo(x,y+h,x,y+h-r,r);ctx.lineTo(x,y+r);ctx.arcTo(x,y,x+r,y,r);ctx.closePath();
+}
+
+function drawClearScreen(){
+  const t=Math.min(1,fr/60);
+  ctx.fillStyle=`rgba(0,0,0,${t*.75})`;ctx.fillRect(0,0,GW,GH);
+  ctx.globalAlpha=t;
+  ctx.fillStyle='#fc0';ctx.font='bold 26px monospace';ctx.textAlign='center';
+  ctx.fillText('STAGE CLEAR!',GW/2,GH/2-12);
+  ctx.fillStyle='#aaa';ctx.font='11px monospace';
+  ctx.fillText(`PHASE ${si+1} COMPLETE`,GW/2,GH/2+8);
+  ctx.textAlign='left';ctx.globalAlpha=1;
+}
+
+// ================================================================
+//  ステートマシン
+// ================================================================
+function startGame(){
+  si=0; colKeys=0; colKeySet.clear(); colSmallSet.clear(); fr=0;
+  initPlayer(); cam.x=0; cam.y=0;
+  gameState='playing';
+  document.getElementById('ov').classList.add('hidden');
+}
+
+function nextStage(){
+  si++;
+  if(si>=STAGES.length){
+    document.getElementById('ov-title').textContent='COMPLETE!';
+    document.getElementById('ov-sub').textContent='全6ステージクリア！おめでとう！';
+    document.getElementById('ov-ctrl').textContent='';
+    document.getElementById('ov-btn').textContent='もう一度';
+    document.getElementById('ov-btn').onclick=startGame;
+    document.getElementById('ov').classList.remove('hidden');
+    gameState='title'; return;
+  }
+  colKeys=0; colKeySet.clear(); colSmallSet.clear(); fr=0;
+  initPlayer(); cam.x=0; cam.y=0;
+  gameState='playing';
+}
+
+document.getElementById('ov-btn').addEventListener('click',startGame);
+
+// ================================================================
+//  メインループ
+// ================================================================
+const stg0=STAGES[0]; si=0; initPlayer();
+
+function loop(){
+  update();
+  draw();
+  if(gameState==='clear'&&fr>100) nextStage();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
