@@ -14,6 +14,10 @@ canvas{display:block;image-rendering:pixelated;touch-action:none}
 #ov .ctrl{font-size:clamp(9px,2vw,12px);color:#66aaff;background:rgba(0,100,255,.1);padding:8px 16px;border:1px solid #224;border-radius:4px;text-align:center;line-height:1.8}
 #ov button{margin-top:8px;padding:10px 36px;font-size:clamp(13px,3vw,18px);background:transparent;border:2px solid #4af;color:#4af;cursor:pointer;letter-spacing:.2em;border-radius:2px;transition:.2s}
 #ov button:hover{background:rgba(68,170,255,.15)}
+#ov-stages{display:flex;gap:8px;margin-top:4px;flex-wrap:wrap;justify-content:center}
+#ov-stages button{margin-top:0;padding:6px 14px;font-size:clamp(10px,2vw,13px);border-color:#446;color:#aac;letter-spacing:.05em}
+#ov-stages button.unlocked{border-color:#4af;color:#4af}
+#ov-stages button.cleared{border-color:#0f8;color:#0f8}
 .hidden{display:none!important}
 </style>
 </head>
@@ -28,6 +32,7 @@ canvas{display:block;image-rendering:pixelated;touch-action:none}
     スマホ：画面左下=移動 / 中央=DASH / 右下=SHIFT&JUMP
   </p>
   <button id="ov-btn">START</button>
+  <div id="ov-stages"></div>
 </div>
 <script>
 // ================================================================
@@ -1403,6 +1408,7 @@ function nextStage(){
     document.getElementById('ov-btn').textContent='もう一度';
     document.getElementById('ov-btn').onclick=startGame;
     document.getElementById('ov').classList.remove('hidden');
+    buildStageSelect();
     stopBGM();
     gameState='title'; return;
   }
@@ -1415,9 +1421,52 @@ function nextStage(){
 document.getElementById('ov-btn').addEventListener('click',startGame);
 
 // ================================================================
+//  ステージセレクト（進捗セーブ）
+// ================================================================
+function getSavedProgress(){
+  return Number(localStorage.getItem('blink_progress')||0);
+}
+function saveProgress(stageIdx){
+  const cur=getSavedProgress();
+  if(stageIdx>cur) localStorage.setItem('blink_progress',stageIdx);
+}
+function buildStageSelect(){
+  const wrap=document.getElementById('ov-stages');
+  wrap.innerHTML='';
+  const prog=getSavedProgress();
+  if(prog===0) return; // まだ1ステージも進んでいないなら非表示
+  const label=document.createElement('span');
+  label.style.cssText='color:#888;font-size:11px;width:100%;text-align:center;display:block;margin-bottom:2px';
+  label.textContent='— ステージセレクト —';
+  wrap.appendChild(label);
+  for(let i=0;i<STAGES.length;i++){
+    const btn=document.createElement('button');
+    btn.textContent=`S${i+1}`;
+    if(i<=prog){
+      btn.classList.add(i<prog?'cleared':'unlocked');
+      btn.addEventListener('click',()=>{
+        si=i; resetStageState(); deathCount=0;
+        initPlayer(); cam.x=0; cam.y=0;
+        gameState='playing'; stageIntroT=90;
+        ghosts=[]; startBGM();
+        document.getElementById('ov').classList.add('hidden');
+      });
+    }
+    wrap.appendChild(btn);
+  }
+}
+// ステージクリア時に進捗を保存
+const _origNextStage=nextStage;
+function nextStage(){
+  saveProgress(si); // クリアしたステージを記録
+  _origNextStage();
+}
+
+// ================================================================
 //  メインループ
 // ================================================================
 const stg0=STAGES[0]; si=0; initPlayer();
+buildStageSelect(); // ページロード時にセーブ済み進捗を反映
 
 function loop(){
   update();
